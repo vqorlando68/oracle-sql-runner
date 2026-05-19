@@ -8,7 +8,7 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   params: string[];
-  onExecute: (bindValues: Record<string, any>) => void;
+  onExecute: (bindValues: Record<string, any>, bindTypes: Record<string, string>) => void;
 }
 
 export default function ParamModal({ isOpen, onClose, params, onExecute }: Props) {
@@ -51,7 +51,13 @@ export default function ParamModal({ isOpen, onClose, params, onExecute }: Props
       }
     });
     
-    onExecute(finalBinds);
+    // Also extract the types
+    const finalBindTypes: Record<string, string> = {};
+    Object.keys(binds).forEach(key => {
+      finalBindTypes[key] = binds[key].type;
+    });
+    
+    onExecute(finalBinds, finalBindTypes);
     onClose();
   };
 
@@ -90,7 +96,8 @@ export default function ParamModal({ isOpen, onClose, params, onExecute }: Props
                 <div className="w-2/3">
                   <label className="block text-xs font-medium mb-1 opacity-70">Value</label>
                   <input 
-                    type={binds[param]?.type === 'number' ? 'number' : (binds[param]?.type === 'date' ? 'date' : 'text')}
+                    type={binds[param]?.type === 'number' ? 'number' : (binds[param]?.type === 'date' || binds[param]?.type === 'timestamp' ? 'datetime-local' : 'text')}
+                    step={binds[param]?.type === 'timestamp' || binds[param]?.type === 'date' ? '1' : undefined}
                     className={`w-full p-2 text-sm rounded-md border ${inputBg} outline-none focus:ring-2 focus:ring-blue-500`}
                     value={binds[param]?.value || ''}
                     onChange={(e) => handleValueChange(param, e.target.value)}

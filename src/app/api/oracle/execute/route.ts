@@ -4,7 +4,7 @@ import { executeOracleQuery } from '@/lib/db';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { connection, sql, binds, enableDbmsOutput } = body;
+    const { connection, sql, binds, bindTypes, enableDbmsOutput } = body;
 
     if (!connection || !sql) {
       return NextResponse.json(
@@ -13,7 +13,17 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await executeOracleQuery(connection, sql, binds || {}, enableDbmsOutput);
+    // Restore Date objects from JSON strings if bindTypes specifies date or timestamp
+    const processedBinds = { ...(binds || {}) };
+    if (bindTypes) {
+      Object.keys(bindTypes).forEach(key => {
+        if ((bindTypes[key] === 'date' || bindTypes[key] === 'timestamp') && processedBinds[key]) {
+          processedBinds[key] = new Date(processedBinds[key]);
+        }
+      });
+    }
+
+    const result = await executeOracleQuery(connection, sql, processedBinds, enableDbmsOutput);
     return NextResponse.json(result);
   } catch (error: any) {
     return NextResponse.json(

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Connection, HistoryRecord, SqlParam, SqlTab } from '../types';
+import { Connection, HistoryRecord, SqlTab, FormatOptions, ExportOptions, GridOptions, AppToast } from '../types';
 
 interface AppState {
   connections: Connection[];
@@ -10,6 +10,11 @@ interface AppState {
   
   tabs: SqlTab[];
   activeTabId: string;
+  
+  formatOptions: FormatOptions;
+  exportOptions: ExportOptions;
+  gridOptions: GridOptions;
+  toast: AppToast | null;
 
   addConnection: (conn: Connection) => void;
   updateConnection: (conn: Connection) => void;
@@ -27,6 +32,12 @@ interface AppState {
   removeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTabContent: (id: string, query: string) => void;
+  
+  setFormatOptions: (options: FormatOptions) => void;
+  setExportOptions: (options: ExportOptions) => void;
+  setGridOptions: (options: GridOptions) => void;
+  showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+  hideToast: () => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -39,6 +50,45 @@ export const useAppStore = create<AppState>()(
       
       tabs: [{ id: 'default', title: 'Query 1', query: '-- Write your Oracle SQL here\nSELECT * FROM DUAL;' }],
       activeTabId: 'default',
+
+      formatOptions: {
+        language: 'plsql',
+        tabWidth: 2,
+        useTabs: false,
+        keywordCase: 'upper',
+        identifierCase: 'preserve',
+        dataTypeCase: 'upper',
+        functionCase: 'upper',
+        logicalOperatorNewline: 'before',
+        expressionWidth: 50,
+        linesBetweenQueries: 1,
+        denseOperators: false,
+        newlineBeforeSemicolon: false
+      },
+
+      exportOptions: {
+        includeNullText: false,
+        includeSqlStatement: false,
+        includeColumnHeaders: true,
+        headerLowercase: false,
+        headerQuoted: false,
+        exportAsInList: false,
+        inListColumn: '',
+        delimiter: 'comma',
+        delimiterAscii: 44,
+        includeDelimiterAfterLastCol: false,
+        columnsToExclude: 'BFile,BLOB,CLOB,Long,User-Defined',
+        stringQuoting: 'dont_quote',
+        numberQuoting: 'dont_quote',
+        dateFormat: 'YYYY-MM-DD HH24:MI:SS'
+      },
+
+      gridOptions: {
+        dateFormat: 'YYYY-MM-DD HH24:MI:SS',
+        numberFormat: 'none',
+        truncateLength: 50
+      },
+      toast: null,
 
       addConnection: (conn) => set((state) => ({ connections: [...state.connections, conn] })),
       updateConnection: (conn) => set((state) => ({
@@ -72,9 +122,27 @@ export const useAppStore = create<AppState>()(
       updateTabContent: (id, query) => set((state) => ({
         tabs: state.tabs.map((t) => (t.id === id ? { ...t, query } : t)),
       })),
+      
+      setFormatOptions: (options) => set({ formatOptions: options }),
+      setExportOptions: (options) => set({ exportOptions: options }),
+      setGridOptions: (options) => set({ gridOptions: options }),
+      showToast: (message, type = 'success') => {
+        set({ toast: { message, type } });
+        setTimeout(() => {
+          set((state) => {
+            if (state.toast?.message === message) return { toast: null };
+            return {};
+          });
+        }, 3000);
+      },
+      hideToast: () => set({ toast: null })
     }),
     {
       name: 'oracle-sql-runner-storage',
+      partialize: (state) => {
+        const { toast, ...rest } = state;
+        return rest;
+      }
     }
   )
 );

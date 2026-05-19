@@ -2,15 +2,18 @@
 
 import { useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
-import { Database, History, Star, Plus, Trash2, Edit2, PlayCircle, Settings2, CheckCircle, XCircle } from 'lucide-react';
+import { Database, History, Star, Plus, Trash2, Edit2, PlayCircle, Settings2, CheckCircle, XCircle, Eye, Download, X, Copy } from 'lucide-react';
 import { Connection } from '@/types';
 import ConnectionModal from './ConnectionModal';
+import { saveAs } from 'file-saver';
+import Editor from '@monaco-editor/react';
 
 export default function Sidebar() {
-  const { connections, activeConnectionId, setActiveConnection, removeConnection, history, toggleTheme, isDark, addTab } = useAppStore();
+  const { connections, activeConnectionId, setActiveConnection, removeConnection, history, removeHistory, toggleTheme, isDark, addTab, showToast } = useAppStore();
   const [tab, setTab] = useState<'connections' | 'history' | 'favorites'>('connections');
   const [isConnModalOpen, setConnModalOpen] = useState(false);
   const [editingConn, setEditingConn] = useState<Connection | null>(null);
+  const [sqlModal, setSqlModal] = useState<{ isOpen: boolean, sql: string }>({ isOpen: false, sql: '' });
 
   const handleEdit = (conn: Connection) => {
     setEditingConn(conn);
@@ -98,10 +101,38 @@ export default function Sidebar() {
               >
                 <div className="text-xs opacity-50 mb-1">{new Date(item.timestamp).toLocaleString()}</div>
                 <div className="font-mono text-xs truncate opacity-80 mb-2">{item.sql}</div>
-                <div className="flex justify-between items-center text-xs">
+                <div className="flex justify-between items-center text-xs mt-2">
                   <span className={item.status === 'success' ? 'text-green-500' : 'text-red-500'}>
                     {item.status === 'success' ? `${item.duration}ms` : 'Failed'}
                   </span>
+                  
+                  <div className="flex items-center gap-1">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setSqlModal({ isOpen: true, sql: item.sql }); }} 
+                      className="p-1 hover:bg-black/10 rounded text-blue-500" 
+                      title="View Full SQL"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                    </button>
+                    <button 
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        const blob = new Blob([item.sql], { type: "text/plain;charset=utf-8" });
+                        saveAs(blob, `query_${new Date(item.timestamp).getTime()}.sql`);
+                      }} 
+                      className="p-1 hover:bg-black/10 rounded text-green-500" 
+                      title="Download SQL"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); removeHistory(item.id); }} 
+                      className="p-1 hover:bg-red-500/10 rounded text-red-500" 
+                      title="Delete from History"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -145,6 +176,58 @@ export default function Sidebar() {
           onClose={() => setConnModalOpen(false)}
           connection={editingConn}
         />
+      )}
+
+      {sqlModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-4xl h-[80vh] flex flex-col rounded-xl shadow-2xl ${isDark ? 'bg-gray-900 border-gray-700 text-gray-200' : 'bg-white border-gray-200 text-gray-800'} border`}>
+            <div className={`p-4 border-b flex justify-between items-center ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
+              <h3 className="font-bold">Full SQL Instruction</h3>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(sqlModal.sql);
+                    showToast('SQL copied to clipboard!');
+                  }}
+                  className="p-1.5 rounded-md hover:bg-black/10 text-blue-500"
+                  title="Copy to Clipboard"
+                >
+                  <Copy className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => {
+                    const blob = new Blob([sqlModal.sql], { type: "text/plain;charset=utf-8" });
+                    saveAs(blob, `query_${Date.now()}.sql`);
+                  }}
+                  className="p-1.5 rounded-md hover:bg-black/10 text-green-500"
+                  title="Download SQL"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+                <button onClick={() => setSqlModal({ isOpen: false, sql: '' })} className="p-1.5 rounded-md hover:bg-black/10">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 relative p-1">
+              <Editor
+                height="100%"
+                defaultLanguage="sql"
+                theme={isDark ? 'vs-dark' : 'light'}
+                value={sqlModal.sql}
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  fontFamily: 'JetBrains Mono, Consolas, monospace',
+                  lineHeight: 20,
+                  scrollBeyondLastLine: false,
+                  domReadOnly: true,
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

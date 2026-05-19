@@ -13,21 +13,54 @@ import {
   VisibilityState
 } from '@tanstack/react-table';
 import { useAppStore } from '@/store/useAppStore';
-import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download, Copy, FileText, FileJson, Columns, Maximize2, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download, Copy, FileText, FileJson, Columns, Maximize2, X, Settings, Monitor } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
+import ExportConfigModal from './ExportConfigModal';
+import GridConfigModal from './GridConfigModal';
+
+const formatOracleDate = (dateObj: Date, formatStr: string) => {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  
+  const YYYY = dateObj.getUTCFullYear().toString();
+  const MM = pad(dateObj.getUTCMonth() + 1);
+  const DD = pad(dateObj.getUTCDate());
+  const HH24 = pad(dateObj.getUTCHours());
+  const MI = pad(dateObj.getUTCMinutes());
+  const SS = pad(dateObj.getUTCSeconds());
+  
+  const h12 = dateObj.getUTCHours() % 12 || 12;
+  const HH = pad(h12);
+  const isPM = dateObj.getUTCHours() >= 12;
+  const A_M = isPM ? 'PM' : 'AM';
+  const a_m = isPM ? 'pm' : 'am';
+
+  return formatStr
+    .replace(/YYYY/g, YYYY)
+    .replace(/MM/g, MM)
+    .replace(/DD/g, DD)
+    .replace(/HH24/g, HH24)
+    .replace(/HH/g, HH)
+    .replace(/MI/g, MI)
+    .replace(/SS/g, SS)
+    .replace(/AM|PM/g, A_M)
+    .replace(/am|pm/g, a_m);
+};
 
 interface Props {
   data: any[];
   columns: string[];
+  sql?: string;
 }
 
-export default function ResultsTable({ data, columns }: Props) {
-  const { isDark } = useAppStore();
+export default function ResultsTable({ data, columns, sql }: Props) {
+  const { isDark, exportOptions, gridOptions, showToast } = useAppStore();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [isColsDropdownOpen, setIsColsDropdownOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [gridModalOpen, setGridModalOpen] = useState(false);
   
   // Modal state for viewing cell details
   const [cellModal, setCellModal] = useState<{ isOpen: boolean; content: string; colName: string }>({ isOpen: false, content: '', colName: '' });
@@ -47,11 +80,29 @@ export default function ResultsTable({ data, columns }: Props) {
           displayVal = String(val);
         }
         
-        const isLong = displayVal.length > 50;
+        // Date formatting based on Grid Options
+        const isoDateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+        if (typeof val === 'string' && isoDateRegex.test(val)) {
+          const d = new Date(val);
+          if (!isNaN(d.getTime())) {
+            const fmt = gridOptions?.dateFormat || 'YYYY-MM-DD HH24:MI:SS';
+            displayVal = formatOracleDate(d, fmt);
+          }
+        } else {
+          // Number formatting
+          let isNum = !isNaN(Number(displayVal)) && displayVal.trim() !== '';
+          if (isNum && gridOptions?.numberFormat === 'locale') {
+            displayVal = Number(displayVal).toLocaleString();
+          }
+        }
+        
+        const truncateLimit = gridOptions?.truncateLength || 50;
+        const isLong = displayVal.length > truncateLimit;
+        const truncatedVal = isLong ? displayVal.substring(0, truncateLimit) + '...' : displayVal;
 
         return (
           <div className="flex justify-between items-center group gap-2">
-            <span className="truncate max-w-[250px] inline-block">{displayVal}</span>
+            <span className={`truncate inline-block`} style={{ maxWidth: truncateLimit * 8 + 'px' }}>{truncatedVal}</span>
             {isLong && (
               <button 
                 onClick={() => setCellModal({ isOpen: true, content: displayVal, colName: col })}
@@ -65,7 +116,7 @@ export default function ResultsTable({ data, columns }: Props) {
         );
       }
     }));
-  }, [columns]);
+  }, [columns, gridOptions]);
 
   const table = useReactTable({
     data,
@@ -89,9 +140,75 @@ export default function ResultsTable({ data, columns }: Props) {
   };
 
   const exportCSV = () => {
-    const ws = XLSX.utils.json_to_sheet(data);
-    const csv = XLSX.utils.sheet_to_csv(ws);
-    saveAs(new Blob([csv], { type: "text/csv;charset=utf-8" }), 'results.csv');
+    const excludedCols = exportOptions.columnsToExclude.split(',').map(s => s.trim().toLowerCase());
+    const validCols = columns.filter(col => !excludedCols.includes(col.toLowerCase()));
+    const delimiterChar = String.fromCharCode(exportOptions.delimiterAscii);
+    
+    let textContent = "";
+
+    // Include SQL statement at top if configured
+    if (exportOptions.includeSqlStatement && sql) {
+      textContent += `-- SQL Statement:\n`;
+      textContent += sql.split('\n').map(line => `-- ${line}`).join('\n') + '\n\n';
+    }
+
+    if (exportOptions.exportAsInList && exportOptions.inListColumn) {
+      // Export just as a single IN list: 'val1', 'val2', 'val3'
+      const vals = data.map(row => {
+        let v = row[exportOptions.inListColumn];
+        if (v === null || v === undefined) return '';
+        return `'${v}'`;
+      }).filter(v => v !== '');
+      textContent += vals.join(delimiterChar);
+      saveAs(new Blob([textContent], { type: "text/plain;charset=utf-8" }), 'in_list.txt');
+      return;
+    }
+
+    // Include Column Headers
+    if (exportOptions.includeColumnHeaders) {
+      const headerLine = validCols.map(col => {
+        let c = exportOptions.headerLowercase ? col.toLowerCase() : col;
+        return exportOptions.headerQuoted ? `"${c}"` : c;
+      }).join(delimiterChar) + (exportOptions.includeDelimiterAfterLastCol ? delimiterChar : '');
+      textContent += headerLine + '\n';
+    }
+
+    // Rows Data
+    data.forEach(row => {
+      const rowLine = validCols.map(col => {
+        let val = row[col];
+        if (val === null || val === undefined) {
+          return exportOptions.includeNullText ? 'null' : '';
+        }
+        if (typeof val === 'object') val = JSON.stringify(val);
+        
+        let strVal = String(val);
+        
+        const isoDateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+        if (typeof val === 'string' && isoDateRegex.test(val)) {
+          const d = new Date(val);
+          if (!isNaN(d.getTime())) {
+            strVal = formatOracleDate(d, exportOptions.dateFormat || 'YYYY-MM-DD HH24:MI:SS');
+          }
+        }
+        
+        let isNum = !isNaN(Number(strVal)) && strVal.trim() !== '';
+        
+        if (isNum) {
+          if (exportOptions.numberQuoting === 'quote') {
+            strVal = `"${strVal}"`;
+          }
+        } else {
+          if (exportOptions.stringQuoting === 'quote' || strVal.includes(delimiterChar) || strVal.includes('"') || strVal.includes('\n')) {
+            strVal = `"${strVal.replace(/"/g, '""')}"`;
+          }
+        }
+        return strVal;
+      }).join(delimiterChar) + (exportOptions.includeDelimiterAfterLastCol ? delimiterChar : '');
+      textContent += rowLine + '\n';
+    });
+
+    saveAs(new Blob([textContent], { type: "text/csv;charset=utf-8" }), 'results.csv');
   };
 
   const exportJSON = () => {
@@ -103,7 +220,7 @@ export default function ResultsTable({ data, columns }: Props) {
     const ws = XLSX.utils.json_to_sheet(data);
     const txt = XLSX.utils.sheet_to_txt(ws);
     navigator.clipboard.writeText(txt);
-    alert('Copied to clipboard!');
+    showToast('Grid data copied to clipboard!');
   };
 
   if (!data || data.length === 0) return (
@@ -166,9 +283,12 @@ export default function ResultsTable({ data, columns }: Props) {
           <div className="w-px h-5 bg-gray-500/20 mx-1"></div>
 
           <button onClick={exportExcel} className="p-1.5 rounded hover:bg-blue-500/10 text-blue-500" title="Export Excel"><Download className="w-4 h-4" /></button>
-          <button onClick={exportCSV} className="p-1.5 rounded hover:bg-green-500/10 text-green-500" title="Export CSV"><FileText className="w-4 h-4" /></button>
+          <button onClick={exportCSV} className="p-1.5 rounded hover:bg-green-500/10 text-green-500" title="Export CSV / Text"><FileText className="w-4 h-4" /></button>
           <button onClick={exportJSON} className="p-1.5 rounded hover:bg-yellow-500/10 text-yellow-600" title="Export JSON"><FileJson className="w-4 h-4" /></button>
           <button onClick={copyToClipboard} className="p-1.5 rounded hover:bg-gray-500/10" title="Copy"><Copy className="w-4 h-4" /></button>
+          <div className="w-px h-5 bg-gray-500/20 mx-1"></div>
+          <button onClick={() => setGridModalOpen(true)} className="p-1.5 rounded hover:bg-gray-500/10 opacity-70 hover:opacity-100" title="Grid Settings"><Monitor className="w-4 h-4" /></button>
+          <button onClick={() => setExportModalOpen(true)} className="p-1.5 rounded hover:bg-gray-500/10 opacity-70 hover:opacity-100" title="Export Settings"><Settings className="w-4 h-4" /></button>
         </div>
       </div>
 
@@ -251,6 +371,19 @@ export default function ResultsTable({ data, columns }: Props) {
           </div>
         </div>
       )}
+
+      {/* Export Settings Modal */}
+      <ExportConfigModal 
+        isOpen={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        availableColumns={columns}
+      />
+
+      {/* Grid Settings Modal */}
+      <GridConfigModal 
+        isOpen={gridModalOpen}
+        onClose={() => setGridModalOpen(false)}
+      />
     </div>
   );
 }

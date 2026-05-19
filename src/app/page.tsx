@@ -7,13 +7,16 @@ import ParamModal from '@/components/ParamModal';
 import ResultsTable from '@/components/ResultsTable';
 import Editor from '@monaco-editor/react';
 import { extractSqlParams } from '@/lib/sql-parser';
-import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle, Plus, X, MessageSquare, Trash2 } from 'lucide-react';
+import FormatterConfigModal from '@/components/FormatterConfigModal';
+import { format } from 'sql-formatter';
+import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle, Plus, X, MessageSquare, Trash2, Wand2, Settings2 } from 'lucide-react';
 import { ExecResult } from '@/types';
 
 export default function Home() {
   const { 
     isDark, activeConnectionId, connections, addHistory,
-    tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent
+    tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent, formatOptions,
+    toast, hideToast
   } = useAppStore();
   
   const [isExecuting, setIsExecuting] = useState(false);
@@ -23,6 +26,7 @@ export default function Home() {
   const [detectedParams, setDetectedParams] = useState<string[]>([]);
   const [enableDbmsOutput, setEnableDbmsOutput] = useState(false);
   const [bottomTab, setBottomTab] = useState<'results' | 'dbms'>('results');
+  const [formatModalOpen, setFormatModalOpen] = useState(false);
 
   const editorRef = useRef<any>(null);
 
@@ -34,6 +38,15 @@ export default function Home() {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       handleExecuteClick();
     });
+  };
+
+  const handleFormat = () => {
+    try {
+      const formatted = format(activeTab.query, formatOptions as any);
+      updateTabContent(activeTab.id, formatted);
+    } catch (e) {
+      console.error('Format error', e);
+    }
   };
 
   const handleExecuteClick = () => {
@@ -59,7 +72,7 @@ export default function Home() {
     }
   };
 
-  const executeSql = async (query: string, binds: Record<string, any>) => {
+  const executeSql = async (query: string, binds: Record<string, any>, bindTypes?: Record<string, string>) => {
     setIsExecuting(true);
     setError(null);
     setResult(null);
@@ -72,6 +85,7 @@ export default function Home() {
           connection: activeConnection,
           sql: query,
           binds,
+          bindTypes,
           enableDbmsOutput
         })
       });
@@ -147,6 +161,23 @@ export default function Home() {
               DBMS_OUTPUT
             </label>
             <div className="w-px h-5 bg-gray-500/20"></div>
+            <div className={`flex items-center rounded-md border ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-white'} overflow-hidden`}>
+              <button 
+                onClick={handleFormat}
+                className={`px-3 py-1.5 text-sm font-medium flex items-center gap-2 ${isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'} transition-colors`}
+                title="Format SQL"
+              >
+                <Wand2 className="w-4 h-4" /> Format
+              </button>
+              <div className={`w-px h-full ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`}></div>
+              <button 
+                onClick={() => setFormatModalOpen(true)}
+                className={`px-2 py-1.5 flex items-center justify-center ${isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'} transition-colors`}
+                title="Format Settings"
+              >
+                <Settings2 className="w-4 h-4 opacity-70" />
+              </button>
+            </div>
             <button 
               onClick={() => updateTabContent(activeTab.id, '')}
               className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-200'} transition-colors`}
@@ -261,7 +292,7 @@ export default function Home() {
                     </div>
                   </div>
                 ) : result ? (
-                  <ResultsTable data={result.rows} columns={result.columns} />
+                  <ResultsTable data={result.rows} columns={result.columns} sql={activeTab.query} />
                 ) : (
                   <div className="h-full flex items-center justify-center opacity-30 text-sm flex-col gap-2">
                     <Database className="w-8 h-8 mb-2 opacity-50" />
@@ -302,8 +333,30 @@ export default function Home() {
         isOpen={paramsModalOpen}
         onClose={() => setParamsModalOpen(false)}
         params={detectedParams}
-        onExecute={(binds) => executeSql(activeTab.query, binds)}
+        onExecute={(binds, bindTypes) => executeSql(activeTab.query, binds, bindTypes)}
       />
+      <FormatterConfigModal 
+        isOpen={formatModalOpen}
+        onClose={() => setFormatModalOpen(false)}
+      />
+
+      {toast && (
+        <div className="fixed bottom-5 right-5 z-[200] flex items-center gap-2 px-4 py-3 rounded-lg shadow-xl border backdrop-blur-md bg-opacity-90 transition-all duration-300 transform translate-y-0 animate-bounce-short"
+          style={{
+            backgroundColor: isDark ? 'rgba(30, 41, 59, 0.9)' : 'rgba(255, 255, 255, 0.9)',
+            borderColor: isDark ? 'rgba(71, 85, 105, 0.5)' : 'rgba(226, 232, 240, 1)',
+            color: isDark ? '#e2e8f0' : '#1e293b'
+          }}
+        >
+          {toast.type === 'success' && <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />}
+          {toast.type === 'error' && <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />}
+          {toast.type === 'info' && <Database className="w-5 h-5 text-blue-500 shrink-0" />}
+          <span className="text-sm font-medium">{toast.message}</span>
+          <button onClick={hideToast} className="ml-2 p-0.5 rounded-md hover:bg-black/10 opacity-60 hover:opacity-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </main>
   );
 }

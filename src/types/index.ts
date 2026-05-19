@@ -42,3 +42,46 @@ export interface ExecResult {
   error?: string;
   dbmsOutput?: string[];
 }
+
+export interface FormatOptions {
+  language: 'plsql';
+  tabWidth: number;
+  useTabs: boolean;
+  keywordCase: 'upper' | 'lower' | 'preserve';
+  identifierCase: 'upper' | 'lower' | 'preserve';
+  dataTypeCase: 'upper' | 'lower' | 'preserve';
+  functionCase: 'upper' | 'lower' | 'preserve';
+  logicalOperatorNewline: 'before' | 'after';
+  expressionWidth: number;
+  linesBetweenQueries: number;
+  denseOperators: boolean;
+  newlineBeforeSemicolon: boolean;
+}
+
+export interface ExportOptions {
+  includeNullText: boolean;
+  includeSqlStatement: boolean;
+  includeColumnHeaders: boolean;
+  headerLowercase: boolean;
+  headerQuoted: boolean;
+  exportAsInList: boolean;
+  inListColumn: string;
+  delimiter: string; // 'comma', 'tab', 'semicolon', 'custom'
+  delimiterAscii: number;
+  includeDelimiterAfterLastCol: boolean;
+  columnsToExclude: string;
+  stringQuoting: 'dont_quote' | 'quote';
+  numberQuoting: 'dont_quote' | 'quote';
+  dateFormat: string;
+}
+
+export interface GridOptions {
+  dateFormat: string;
+  numberFormat: 'none' | 'locale';
+  truncateLength: number;
+}
+
+export interface AppToast {
+  message: string;
+  type: 'success' | 'error' | 'info';
+}
