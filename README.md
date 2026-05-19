@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Oracle SQL Runner AI
+
+A modern, web-based Oracle SQL execution environment built with Next.js, React, TailwindCSS, and `node-oracledb`. 
+
+## Features
+
+- **Multiple Connections**: Manage multiple Oracle Database connections securely.
+- **Modern SQL Editor**: Features Monaco Editor with syntax highlighting, formatting, and shortcut execution (`Ctrl+Enter`).
+- **Dynamic Parameters**: Automatically detects bind variables (`:PARAM`) in your SQL queries and prompts a dynamic modal to enter values with types (Text, Number, Date, Timestamp, Boolean).
+- **Data Grid**: View results in a highly interactive TanStack table with column resizing, sorting, filtering, and pagination.
+- **Export Options**: Export query results to Excel (`.xlsx`), CSV, JSON, or copy to clipboard.
+- **Execution History**: Keeps track of your executed queries locally, including execution time and status.
+- **Dark Mode**: Sleek dark mode UI built with TailwindCSS.
+
+## Technologies Used
+
+- **Frontend**: Next.js 14+ (App Router), React, TailwindCSS, Zustand (State Management), Framer Motion, `@tanstack/react-table`, Monaco Editor, SheetJS (`xlsx`).
+- **Backend**: Next.js API Routes, `oracledb` (Thin Mode - pure JavaScript driver, no Oracle Client required).
+- **Icons**: Lucide React.
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Node.js 18.x or later
+- npm or yarn
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Installation
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Clone the repository and navigate into the project directory:
+   ```bash
+   cd oracle-sql-runner
+   ```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-## Learn More
+3. Start the development server:
+   ```bash
+   npm run dev
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deployment to Vercel
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+This project is fully ready to be deployed to Vercel. Because the `oracledb` module uses **Thin Mode** by default (since v6), it does NOT require native Oracle binaries (Instant Client) to be installed on the server. This makes it completely serverless-compatible!
 
-## Deploy on Vercel
+1. Push your code to a GitHub repository.
+2. Go to [Vercel](https://vercel.com/) and create a new project.
+3. Import your GitHub repository.
+4. Leave the default build commands (`npm run build`).
+5. Click **Deploy**.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+*Note: Since the API connects to an Oracle Database, ensure your database is accessible over the internet from Vercel's IP addresses, or use a secure tunnel / VPC peering if required by your network architecture.*
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Security Considerations
+
+- **Connections**: Database credentials are saved in the browser's local storage (`localStorage`). This is useful for personal tools but keep in mind that they are not heavily encrypted.
+- **SQL Execution**: The backend executes exactly what is sent from the frontend. Always use caution when executing DML/DDL statements.
+- **Bind Variables**: Always use bind variables (`:PARAM`) for user inputs to prevent SQL Injection. The application handles this automatically.
+
+## License
+
+MIT License

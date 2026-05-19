@@ -1,65 +1,214 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useRef, useEffect } from 'react';
+import { useAppStore } from '@/store/useAppStore';
+import Sidebar from '@/components/Sidebar';
+import ParamModal from '@/components/ParamModal';
+import ResultsTable from '@/components/ResultsTable';
+import Editor from '@monaco-editor/react';
+import { extractSqlParams } from '@/lib/sql-parser';
+import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle } from 'lucide-react';
+import { ExecResult } from '@/types';
 
 export default function Home() {
+  const { isDark, activeConnectionId, connections, addHistory } = useAppStore();
+  const [sql, setSql] = useState('-- Write your Oracle SQL here\nSELECT * FROM DUAL;');
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [result, setResult] = useState<ExecResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [paramsModalOpen, setParamsModalOpen] = useState(false);
+  const [detectedParams, setDetectedParams] = useState<string[]>([]);
+  const editorRef = useRef<any>(null);
+
+  const activeConnection = connections.find(c => c.id === activeConnectionId);
+
+  const handleEditorDidMount = (editor: any, monaco: any) => {
+    editorRef.current = editor;
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      handleExecuteClick();
+    });
+  };
+
+  const handleExecuteClick = () => {
+    if (!activeConnection) {
+      setError("Please select an active connection from the sidebar.");
+      return;
+    }
+    
+    const editor = editorRef.current;
+    let selectedText = editor ? editor.getModel().getValueInRange(editor.getSelection()) : '';
+    let queryToRun = selectedText || sql;
+    
+    if (!queryToRun.trim()) return;
+
+    // Detect params
+    const params = extractSqlParams(queryToRun);
+    if (params.length > 0) {
+      setDetectedParams(params);
+      setParamsModalOpen(true);
+    } else {
+      executeSql(queryToRun, {});
+    }
+  };
+
+  const executeSql = async (query: string, binds: Record<string, any>) => {
+    setIsExecuting(true);
+    setError(null);
+    setResult(null);
+
+    try {
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: query,
+          binds
+        })
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Execution failed');
+      }
+
+      setResult(data);
+      addHistory({
+        id: crypto.randomUUID(),
+        sql: query,
+        timestamp: new Date().toISOString(),
+        connectionId: activeConnection!.id,
+        duration: data.duration,
+        isFavorite: false,
+        status: 'success',
+        rowCount: data.rowCount
+      });
+    } catch (err: any) {
+      setError(err.message);
+      addHistory({
+        id: crypto.randomUUID(),
+        sql: query,
+        timestamp: new Date().toISOString(),
+        connectionId: activeConnection!.id,
+        duration: 0,
+        isFavorite: false,
+        status: 'error',
+        error: err.message
+      });
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  const bg = isDark ? 'bg-gray-950 text-gray-200' : 'bg-white text-gray-800';
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <main className={`flex h-screen w-full overflow-hidden ${bg} font-sans transition-colors duration-300`}>
+      <Sidebar />
+      
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className={`h-14 border-b flex items-center justify-between px-4 ${isDark ? 'border-gray-800 bg-gray-900/40' : 'border-gray-200 bg-gray-50'}`}>
+          <div className="flex items-center gap-3">
+            {activeConnection ? (
+              <div className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-full bg-blue-500/10 text-blue-500 font-medium">
+                <CheckCircle className="w-4 h-4" /> {activeConnection.name}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-full bg-orange-500/10 text-orange-500 font-medium">
+                <AlertTriangle className="w-4 h-4" /> No connection selected
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setSql('')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-200'} transition-colors`}
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              <Eraser className="w-4 h-4" /> Clear
+            </button>
+            <button 
+              onClick={handleExecuteClick}
+              disabled={isExecuting || !activeConnection}
+              className="px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              {isExecuting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              Execute <span className="opacity-60 text-xs ml-1">(Ctrl+Enter)</span>
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <div className="h-[50%] border-b border-inherit relative">
+          <Editor
+            height="100%"
+            defaultLanguage="sql"
+            theme={isDark ? 'vs-dark' : 'light'}
+            value={sql}
+            onChange={(val) => setSql(val || '')}
+            onMount={handleEditorDidMount}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 14,
+              fontFamily: 'JetBrains Mono, Consolas, monospace',
+              lineHeight: 24,
+              padding: { top: 16, bottom: 16 },
+              scrollBeyondLastLine: false,
+              smoothScrolling: true,
+              cursorBlinking: 'smooth',
+            }}
+          />
         </div>
-      </main>
-    </div>
+
+        <div className={`flex-1 flex flex-col min-h-0 bg-opacity-50 ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
+          <div className={`px-4 py-2 text-xs font-semibold flex items-center gap-4 border-b border-inherit ${isDark ? 'bg-gray-800/80' : 'bg-gray-200/50'}`}>
+            <span className="uppercase tracking-wider opacity-60">Results</span>
+            {result && (
+              <div className="flex items-center gap-4 text-xs">
+                <span className="flex items-center gap-1 text-green-500"><CheckCircle className="w-3.5 h-3.5" /> Success</span>
+                <span className="flex items-center gap-1 opacity-70"><Clock className="w-3.5 h-3.5" /> {result.duration}ms</span>
+                <span className="flex items-center gap-1 opacity-70"><Database className="w-3.5 h-3.5" /> {result.rowCount} rows</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-hidden relative">
+            {isExecuting ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/5 backdrop-blur-[1px] z-10">
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="text-sm font-medium animate-pulse opacity-80">Executing query...</span>
+                </div>
+              </div>
+            ) : null}
+
+            {error ? (
+              <div className="p-6 h-full overflow-auto">
+                <div className="flex gap-3 text-red-500 bg-red-500/10 p-4 rounded-lg border border-red-500/20">
+                  <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-bold mb-1">Execution Error</h3>
+                    <pre className="text-xs font-mono whitespace-pre-wrap">{error}</pre>
+                  </div>
+                </div>
+              </div>
+            ) : result ? (
+              <ResultsTable data={result.rows} columns={result.columns} />
+            ) : (
+              <div className="h-full flex items-center justify-center opacity-30 text-sm flex-col gap-2">
+                <Database className="w-8 h-8 mb-2 opacity-50" />
+                Run a query to see results
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <ParamModal
+        isOpen={paramsModalOpen}
+        onClose={() => setParamsModalOpen(false)}
+        params={detectedParams}
+        onExecute={(binds) => executeSql(sql, binds)}
+      />
+    </main>
   );
 }
