@@ -22,7 +22,7 @@ function safeSerialize(obj: any) {
   return JSON.parse(serialized);
 }
 
-export async function executeOracleQuery(connectionParams: any, sql: string, binds: any = {}) {
+export async function executeOracleQuery(connectionParams: any, sql: string, binds: any = {}, enableDbmsOutput: boolean = false) {
   let connection;
   try {
     // Basic config to output objects instead of arrays
@@ -38,9 +38,30 @@ export async function executeOracleQuery(connectionParams: any, sql: string, bin
       connectString: `${connectionParams.host}:${connectionParams.port}/${connectionParams.serviceName}`
     });
 
+    if (enableDbmsOutput) {
+      await connection.execute(`BEGIN DBMS_OUTPUT.ENABLE(NULL); END;`);
+    }
+
     const startTime = Date.now();
     const result = await connection.execute(sql, binds);
     const duration = Date.now() - startTime;
+
+    let dbmsOutput: string[] | undefined = undefined;
+
+    if (enableDbmsOutput) {
+      const outputResult: any = await connection.execute(
+        `BEGIN
+           DBMS_OUTPUT.GET_LINES(:p_lines, :p_numlines);
+         END;`,
+        {
+          p_lines: { type: oracledb.STRING, dir: oracledb.BIND_OUT, maxArraySize: 32767 },
+          p_numlines: { type: oracledb.NUMBER, dir: oracledb.BIND_INOUT, val: 32767 }
+        }
+      );
+      if (outputResult.outBinds && outputResult.outBinds.p_lines) {
+        dbmsOutput = outputResult.outBinds.p_lines;
+      }
+    }
 
     // Handle SELECT vs DML
     const rows = result.rows || [];
@@ -60,6 +81,7 @@ export async function executeOracleQuery(connectionParams: any, sql: string, bin
       columns,
       duration,
       rowCount: rows.length || rowsAffected,
+      dbmsOutput
     };
   } catch (err: any) {
     throw new Error(err.message || 'Error executing Oracle query');

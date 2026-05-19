@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import Sidebar from '@/components/Sidebar';
 import ParamModal from '@/components/ParamModal';
 import ResultsTable from '@/components/ResultsTable';
 import Editor from '@monaco-editor/react';
 import { extractSqlParams } from '@/lib/sql-parser';
-import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle, Plus, X } from 'lucide-react';
+import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle, Plus, X, MessageSquare, Trash2 } from 'lucide-react';
 import { ExecResult } from '@/types';
 
 export default function Home() {
@@ -21,6 +21,9 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [paramsModalOpen, setParamsModalOpen] = useState(false);
   const [detectedParams, setDetectedParams] = useState<string[]>([]);
+  const [enableDbmsOutput, setEnableDbmsOutput] = useState(false);
+  const [bottomTab, setBottomTab] = useState<'results' | 'dbms'>('results');
+
   const editorRef = useRef<any>(null);
 
   const activeConnection = connections.find(c => c.id === activeConnectionId);
@@ -36,6 +39,7 @@ export default function Home() {
   const handleExecuteClick = () => {
     if (!activeConnection) {
       setError("Please select an active connection from the sidebar.");
+      setBottomTab('results');
       return;
     }
     
@@ -67,7 +71,8 @@ export default function Home() {
         body: JSON.stringify({
           connection: activeConnection,
           sql: query,
-          binds
+          binds,
+          enableDbmsOutput
         })
       });
 
@@ -78,6 +83,12 @@ export default function Home() {
       }
 
       setResult(data);
+      if (enableDbmsOutput && data.dbmsOutput && data.dbmsOutput.length > 0) {
+        setBottomTab('dbms');
+      } else {
+        setBottomTab('results');
+      }
+
       addHistory({
         id: crypto.randomUUID(),
         sql: query,
@@ -90,6 +101,7 @@ export default function Home() {
       });
     } catch (err: any) {
       setError(err.message);
+      setBottomTab('results');
       addHistory({
         id: crypto.randomUUID(),
         sql: query,
@@ -124,7 +136,17 @@ export default function Home() {
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm cursor-pointer opacity-80 hover:opacity-100">
+              <input 
+                type="checkbox" 
+                checked={enableDbmsOutput} 
+                onChange={(e) => setEnableDbmsOutput(e.target.checked)} 
+                className="rounded border-gray-300"
+              />
+              DBMS_OUTPUT
+            </label>
+            <div className="w-px h-5 bg-gray-500/20"></div>
             <button 
               onClick={() => updateTabContent(activeTab.id, '')}
               className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-200'} transition-colors`}
@@ -193,10 +215,22 @@ export default function Home() {
         </div>
 
         <div className={`flex-1 flex flex-col min-h-0 bg-opacity-50 ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
-          <div className={`px-4 py-2 text-xs font-semibold flex items-center gap-4 border-b border-inherit ${isDark ? 'bg-gray-800/80' : 'bg-gray-200/50'}`}>
-            <span className="uppercase tracking-wider opacity-60">Results</span>
+          <div className={`px-2 flex items-center gap-1 border-b border-inherit ${isDark ? 'bg-gray-800/80' : 'bg-gray-200/50'}`}>
+            <button 
+              onClick={() => setBottomTab('results')}
+              className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${bottomTab === 'results' ? 'border-blue-500 text-blue-500' : 'border-transparent opacity-60 hover:opacity-100'}`}
+            >
+              <div className="flex items-center gap-2"><Database className="w-3.5 h-3.5" /> Results</div>
+            </button>
+            <button 
+              onClick={() => setBottomTab('dbms')}
+              className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${bottomTab === 'dbms' ? 'border-blue-500 text-blue-500' : 'border-transparent opacity-60 hover:opacity-100'}`}
+            >
+              <div className="flex items-center gap-2"><MessageSquare className="w-3.5 h-3.5" /> DBMS Output</div>
+            </button>
+
             {result && (
-              <div className="flex items-center gap-4 text-xs">
+              <div className="flex items-center gap-4 text-xs ml-auto pr-2">
                 <span className="flex items-center gap-1 text-green-500"><CheckCircle className="w-3.5 h-3.5" /> Success</span>
                 <span className="flex items-center gap-1 opacity-70"><Clock className="w-3.5 h-3.5" /> {result.duration}ms</span>
                 <span className="flex items-center gap-1 opacity-70"><Database className="w-3.5 h-3.5" /> {result.rowCount} rows</span>
@@ -214,22 +248,50 @@ export default function Home() {
               </div>
             ) : null}
 
-            {error ? (
-              <div className="p-6 h-full overflow-auto">
-                <div className="flex gap-3 text-red-500 bg-red-500/10 p-4 rounded-lg border border-red-500/20">
-                  <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-                  <div>
-                    <h3 className="font-bold mb-1">Execution Error</h3>
-                    <pre className="text-xs font-mono whitespace-pre-wrap">{error}</pre>
+            {bottomTab === 'results' && (
+              <>
+                {error ? (
+                  <div className="p-6 h-full overflow-auto">
+                    <div className="flex gap-3 text-red-500 bg-red-500/10 p-4 rounded-lg border border-red-500/20">
+                      <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                      <div>
+                        <h3 className="font-bold mb-1">Execution Error</h3>
+                        <pre className="text-xs font-mono whitespace-pre-wrap">{error}</pre>
+                      </div>
+                    </div>
                   </div>
+                ) : result ? (
+                  <ResultsTable data={result.rows} columns={result.columns} />
+                ) : (
+                  <div className="h-full flex items-center justify-center opacity-30 text-sm flex-col gap-2">
+                    <Database className="w-8 h-8 mb-2 opacity-50" />
+                    Run a query to see results
+                  </div>
+                )}
+              </>
+            )}
+
+            {bottomTab === 'dbms' && (
+              <div className="h-full flex flex-col">
+                <div className={`p-2 border-b flex justify-between items-center ${isDark ? 'border-gray-800 bg-gray-900/50' : 'border-gray-200 bg-gray-50'}`}>
+                  <span className="text-sm opacity-70">Server Output</span>
+                  <button 
+                    onClick={() => { if(result) { setResult({...result, dbmsOutput: []}); } }}
+                    className="p-1.5 rounded hover:bg-red-500/10 text-red-500 flex items-center gap-1 text-xs font-medium"
+                    title="Clear Output"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Clear Output
+                  </button>
                 </div>
-              </div>
-            ) : result ? (
-              <ResultsTable data={result.rows} columns={result.columns} />
-            ) : (
-              <div className="h-full flex items-center justify-center opacity-30 text-sm flex-col gap-2">
-                <Database className="w-8 h-8 mb-2 opacity-50" />
-                Run a query to see results
+                <div className="flex-1 p-4 overflow-auto custom-scrollbar font-mono text-sm">
+                  {result?.dbmsOutput && result.dbmsOutput.length > 0 ? (
+                    result.dbmsOutput.map((line, idx) => (
+                      <div key={idx} className="whitespace-pre-wrap">{line}</div>
+                    ))
+                  ) : (
+                    <div className="opacity-30 italic text-center mt-10">No DBMS_OUTPUT. Make sure to check the 'DBMS_OUTPUT' box before executing PL/SQL.</div>
+                  )}
+                </div>
               </div>
             )}
           </div>

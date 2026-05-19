@@ -4,7 +4,7 @@ import { executeOracleQuery } from '@/lib/db';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { connection, sql, binds } = body;
+    const { connection, sql, binds, enableDbmsOutput } = body;
 
     if (!connection || !sql) {
       return NextResponse.json(
@@ -13,7 +13,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await executeOracleQuery(connection, sql, binds || {});
+    const result = await executeOracleQuery(connection, sql, binds || {}, enableDbmsOutput);
     return NextResponse.json(result);
   } catch (error: any) {
     return NextResponse.json(

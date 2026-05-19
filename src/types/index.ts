@@ -40,4 +40,5 @@ export interface ExecResult {
   duration: number;
   rowCount: number;
   error?: string;
+  dbmsOutput?: string[];
 }
