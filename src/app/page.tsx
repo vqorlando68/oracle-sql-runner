@@ -5,17 +5,19 @@ import { useAppStore } from '@/store/useAppStore';
 import Sidebar from '@/components/Sidebar';
 import ParamModal from '@/components/ParamModal';
 import ResultsTable from '@/components/ResultsTable';
+import FavoriteNameModal from '@/components/FavoriteNameModal';
 import Editor from '@monaco-editor/react';
 import { extractSqlParams } from '@/lib/sql-parser';
 import FormatterConfigModal from '@/components/FormatterConfigModal';
 import { format } from 'sql-formatter';
-import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle, Plus, X, MessageSquare, Trash2, Wand2, Settings2 } from 'lucide-react';
+import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle, Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus, Save } from 'lucide-react';
 import { ExecResult } from '@/types';
 
 export default function Home() {
-  const { 
+  const {
     isDark, activeConnectionId, connections, addHistory,
     tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent, formatOptions,
+    favorites, favoriteSections, addFavoriteFromSql, updateFavoriteSql, addFavoriteSection,
     toast, hideToast
   } = useAppStore();
   
@@ -27,11 +29,17 @@ export default function Home() {
   const [enableDbmsOutput, setEnableDbmsOutput] = useState(false);
   const [bottomTab, setBottomTab] = useState<'results' | 'dbms'>('results');
   const [formatModalOpen, setFormatModalOpen] = useState(false);
+  // Save modal: 'overwrite' = confirm overwrite existing fav | 'new' = create new fav
+  const [saveModal, setSaveModal] = useState<'overwrite' | 'new' | null>(null);
 
   const editorRef = useRef<any>(null);
 
   const activeConnection = connections.find(c => c.id === activeConnectionId);
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
+  // Favorite linked to the current tab (if any)
+  const activeFavorite = activeTab?.favoriteId
+    ? favorites.find(f => f.id === activeTab.favoriteId)
+    : null;
 
   const handleEditorDidMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
@@ -47,6 +55,31 @@ export default function Home() {
     } catch (e) {
       console.error('Format error', e);
     }
+  };
+
+  const handleSave = () => {
+    if (activeFavorite) {
+      // Tab comes from a favorite — ask to overwrite
+      setSaveModal('overwrite');
+    } else {
+      // New favorite from editor SQL
+      setSaveModal('new');
+    }
+  };
+
+  const handleOverwriteConfirm = () => {
+    if (activeFavorite) {
+      updateFavoriteSql(activeFavorite.id, activeTab.query);
+      setSaveModal(null);
+      // Toast from store
+      useAppStore.getState().showToast(`"${activeFavorite.name}" actualizado`, 'success');
+    }
+  };
+
+  const handleNewFavoriteConfirm = (name: string, sectionId: string) => {
+    addFavoriteFromSql(activeTab.query, name, sectionId);
+    setSaveModal(null);
+    useAppStore.getState().showToast(`"${name}" guardado en favoritos`, 'success');
   };
 
   const handleExecuteClick = () => {
@@ -176,11 +209,26 @@ export default function Home() {
                 <Settings2 className="w-4 h-4 opacity-70" />
               </button>
             </div>
-            <button 
+            <button
               onClick={() => updateTabContent(activeTab.id, '')}
               className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-200'} transition-colors`}
             >
               <Eraser className="w-4 h-4" /> Clear
+            </button>
+            {/* ── Save button ─────────────────────────────── */}
+            <button
+              onClick={handleSave}
+              disabled={!activeTab?.query?.trim()}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors disabled:opacity-40 ${
+                activeFavorite
+                  ? (isDark ? 'bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25 border border-yellow-500/30' : 'bg-yellow-50 text-yellow-600 hover:bg-yellow-100 border border-yellow-300')
+                  : (isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-200')
+              }`}
+              title={activeFavorite ? `Sobreescribir favorito "${activeFavorite.name}"` : 'Guardar como favorito'}
+            >
+              {activeFavorite
+                ? <><BookmarkCheck className="w-4 h-4" /> Guardar</>
+                : <><BookmarkPlus className="w-4 h-4" /> Guardar</>}
             </button>
             <button 
               onClick={handleExecuteClick}
@@ -337,6 +385,57 @@ export default function Home() {
         isOpen={formatModalOpen}
         onClose={() => setFormatModalOpen(false)}
       />
+
+      {/* ── Modal: confirmar sobreescritura de favorito ── */}
+      {saveModal === 'overwrite' && activeFavorite && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-sm rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 ${
+            isDark ? 'bg-gray-900 border-gray-700 text-gray-200' : 'bg-white border-gray-200 text-gray-800'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-yellow-500/15">
+                <BookmarkCheck className="w-5 h-5 text-yellow-400" />
+              </div>
+              <div>
+                <h2 className="font-bold text-base">Sobreescribir favorito</h2>
+                <p className="text-xs opacity-50">El contenido actual del editor reemplazará al favorito</p>
+              </div>
+            </div>
+            <p className={`text-sm px-3 py-2 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
+              ¿Deseas sobreescribir <span className="font-semibold text-yellow-400">{activeFavorite.name}</span> con el SQL actual?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSaveModal(null)}
+                className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${
+                  isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-600'
+                }`}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleOverwriteConfirm}
+                className="flex-1 py-2 rounded-lg text-sm bg-yellow-500 hover:bg-yellow-400 text-black font-semibold transition-colors"
+              >
+                Sobreescribir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: guardar nuevo favorito desde editor ── */}
+      {saveModal === 'new' && (
+        <FavoriteNameModal
+          isDark={isDark}
+          existingNames={favorites.map(f => f.name)}
+          sections={favoriteSections}
+          initialName={activeTab?.title ?? ''}
+          onConfirm={handleNewFavoriteConfirm}
+          onCancel={() => setSaveModal(null)}
+          onAddSection={(id, name) => addFavoriteSection(id, name)}
+        />
+      )}
 
       {toast && (
         <div className="fixed bottom-5 right-5 z-[200] flex items-center gap-2 px-4 py-3 rounded-lg shadow-xl border backdrop-blur-md bg-opacity-90 transition-all duration-300 transform translate-y-0 animate-bounce-short"

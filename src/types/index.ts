@@ -20,6 +20,8 @@ export interface SqlTab {
   id: string;
   title: string;
   query: string;
+  /** Set when this tab was opened from a favorite — used by the Save button */
+  favoriteId?: string;
 }
 
 export interface FavoriteSection {

@@ -36,7 +36,9 @@ interface AppState {
 
   // Favorites
   addFavorite: (historyId: string, name: string, sectionId: string) => void;
+  addFavoriteFromSql: (sql: string, name: string, sectionId: string) => void;
   removeFavorite: (favoriteId: string) => void;
+  updateFavoriteSql: (favoriteId: string, sql: string) => void;
   /** Call when user opens/runs a favorite – updates lastRunAt */
   runFavorite: (favoriteId: string) => void;
 
@@ -157,6 +159,23 @@ export const useAppStore = create<AppState>()(
         // Clear the link on any history item that pointed to this favorite
         history: state.history.map(h =>
           h.linkedFavoriteId === favoriteId ? { ...h, linkedFavoriteId: undefined } : h
+        ),
+      })),
+
+      addFavoriteFromSql: (sql, name, sectionId) => set((state) => {
+        const newFav: Favorite = {
+          id: crypto.randomUUID(),
+          name,
+          sql,
+          sectionId,
+          createdAt: new Date().toISOString(),
+        };
+        return { favorites: [...state.favorites, newFav] };
+      }),
+
+      updateFavoriteSql: (favoriteId, sql) => set((state) => ({
+        favorites: state.favorites.map(f =>
+          f.id === favoriteId ? { ...f, sql } : f
         ),
       })),
 
