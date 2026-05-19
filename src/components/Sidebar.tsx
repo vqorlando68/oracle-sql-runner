@@ -7,7 +7,7 @@ import { Connection } from '@/types';
 import ConnectionModal from './ConnectionModal';
 
 export default function Sidebar() {
-  const { connections, activeConnectionId, setActiveConnection, removeConnection, history, toggleTheme, isDark } = useAppStore();
+  const { connections, activeConnectionId, setActiveConnection, removeConnection, history, toggleTheme, isDark, addTab } = useAppStore();
   const [tab, setTab] = useState<'connections' | 'history' | 'favorites'>('connections');
   const [isConnModalOpen, setConnModalOpen] = useState(false);
   const [editingConn, setEditingConn] = useState<Connection | null>(null);
@@ -91,7 +91,11 @@ export default function Sidebar() {
         {tab === 'history' && (
           <div className="space-y-2">
             {history.map(item => (
-              <div key={item.id} className={`p-3 rounded-md border text-sm ${isDark ? 'border-gray-800 bg-gray-800/30' : 'border-gray-200 bg-white'}`}>
+              <div 
+                key={item.id} 
+                onClick={() => addTab({ id: crypto.randomUUID(), title: 'History Query', query: item.sql })}
+                className={`p-3 rounded-md border text-sm cursor-pointer hover:border-blue-500 transition-colors ${isDark ? 'border-gray-800 bg-gray-800/30' : 'border-gray-200 bg-white'}`}
+              >
                 <div className="text-xs opacity-50 mb-1">{new Date(item.timestamp).toLocaleString()}</div>
                 <div className="font-mono text-xs truncate opacity-80 mb-2">{item.sql}</div>
                 <div className="flex justify-between items-center text-xs">
@@ -110,7 +114,11 @@ export default function Sidebar() {
         {tab === 'favorites' && (
           <div className="space-y-2">
             {history.filter(h => h.isFavorite).map(item => (
-              <div key={item.id} className={`p-3 rounded-md border text-sm ${isDark ? 'border-gray-800 bg-gray-800/30' : 'border-gray-200 bg-white'}`}>
+              <div 
+                key={item.id} 
+                onClick={() => addTab({ id: crypto.randomUUID(), title: 'Favorite Query', query: item.sql })}
+                className={`p-3 rounded-md border text-sm cursor-pointer hover:border-blue-500 transition-colors ${isDark ? 'border-gray-800 bg-gray-800/30' : 'border-gray-200 bg-white'}`}
+              >
                 <div className="font-mono text-xs truncate opacity-80 mb-2">{item.sql}</div>
               </div>
             ))}

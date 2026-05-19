@@ -7,12 +7,15 @@ import ParamModal from '@/components/ParamModal';
 import ResultsTable from '@/components/ResultsTable';
 import Editor from '@monaco-editor/react';
 import { extractSqlParams } from '@/lib/sql-parser';
-import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle } from 'lucide-react';
+import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle, Plus, X } from 'lucide-react';
 import { ExecResult } from '@/types';
 
 export default function Home() {
-  const { isDark, activeConnectionId, connections, addHistory } = useAppStore();
-  const [sql, setSql] = useState('-- Write your Oracle SQL here\nSELECT * FROM DUAL;');
+  const { 
+    isDark, activeConnectionId, connections, addHistory,
+    tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent
+  } = useAppStore();
+  
   const [isExecuting, setIsExecuting] = useState(false);
   const [result, setResult] = useState<ExecResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,6 +24,7 @@ export default function Home() {
   const editorRef = useRef<any>(null);
 
   const activeConnection = connections.find(c => c.id === activeConnectionId);
+  const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
 
   const handleEditorDidMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
@@ -37,7 +41,7 @@ export default function Home() {
     
     const editor = editorRef.current;
     let selectedText = editor ? editor.getModel().getValueInRange(editor.getSelection()) : '';
-    let queryToRun = selectedText || sql;
+    let queryToRun = selectedText || activeTab.query;
     
     if (!queryToRun.trim()) return;
 
@@ -122,7 +126,7 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-2">
             <button 
-              onClick={() => setSql('')}
+              onClick={() => updateTabContent(activeTab.id, '')}
               className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-200'} transition-colors`}
             >
               <Eraser className="w-4 h-4" /> Clear
@@ -138,13 +142,42 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="h-[50%] border-b border-inherit relative">
+        {/* Tabs Bar */}
+        <div className={`flex items-center px-2 pt-2 border-b overflow-x-auto custom-scrollbar ${isDark ? 'border-gray-800 bg-gray-900/20' : 'border-gray-200 bg-gray-50'}`}>
+          {tabs.map((tab, idx) => (
+            <div 
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-3 py-1.5 text-sm border-t border-l border-r rounded-t-lg cursor-pointer max-w-[200px] ${
+                activeTab.id === tab.id 
+                  ? (isDark ? 'bg-gray-950 border-gray-800 text-blue-400' : 'bg-white border-gray-200 text-blue-600') 
+                  : (isDark ? 'bg-transparent border-transparent opacity-60 hover:opacity-100 hover:bg-gray-800' : 'bg-transparent border-transparent opacity-60 hover:opacity-100 hover:bg-gray-200')
+              }`}
+            >
+              <span className="truncate">{tab.title} {idx + 1}</span>
+              <button 
+                onClick={(e) => { e.stopPropagation(); removeTab(tab.id); }}
+                className="p-0.5 rounded-md hover:bg-black/10 opacity-50 hover:opacity-100"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+          <button 
+            onClick={() => addTab({ id: crypto.randomUUID(), title: 'Query', query: '' })}
+            className="ml-2 p-1 rounded hover:bg-black/10 opacity-60 hover:opacity-100 mb-1"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="h-[45%] border-b border-inherit relative">
           <Editor
             height="100%"
             defaultLanguage="sql"
             theme={isDark ? 'vs-dark' : 'light'}
-            value={sql}
-            onChange={(val) => setSql(val || '')}
+            value={activeTab.query}
+            onChange={(val) => updateTabContent(activeTab.id, val || '')}
             onMount={handleEditorDidMount}
             options={{
               minimap: { enabled: false },
@@ -207,7 +240,7 @@ export default function Home() {
         isOpen={paramsModalOpen}
         onClose={() => setParamsModalOpen(false)}
         params={detectedParams}
-        onExecute={(binds) => executeSql(sql, binds)}
+        onExecute={(binds) => executeSql(activeTab.query, binds)}
       />
     </main>
   );

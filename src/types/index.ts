@@ -16,6 +16,12 @@ export interface SqlParam {
   value: any;
 }
 
+export interface SqlTab {
+  id: string;
+  title: string;
+  query: string;
+}
+
 export interface HistoryRecord {
   id: string;
   sql: string;

@@ -9,10 +9,11 @@ import {
   getFilteredRowModel,
   flexRender,
   ColumnDef,
-  SortingState
+  SortingState,
+  VisibilityState
 } from '@tanstack/react-table';
 import { useAppStore } from '@/store/useAppStore';
-import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download, Copy, FileText, FileJson } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download, Copy, FileText, FileJson, Columns, Maximize2, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 
@@ -25,6 +26,11 @@ export default function ResultsTable({ data, columns }: Props) {
   const { isDark } = useAppStore();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [isColsDropdownOpen, setIsColsDropdownOpen] = useState(false);
+  
+  // Modal state for viewing cell details
+  const [cellModal, setCellModal] = useState<{ isOpen: boolean; content: string; colName: string }>({ isOpen: false, content: '', colName: '' });
 
   const tableColumns = useMemo<ColumnDef<any>[]>(() => {
     return columns.map(col => ({
@@ -32,9 +38,31 @@ export default function ResultsTable({ data, columns }: Props) {
       header: col,
       cell: info => {
         const val = info.getValue();
-        if (val === null || val === undefined) return <span className="text-gray-400 italic">null</span>;
-        if (typeof val === 'object') return JSON.stringify(val);
-        return String(val);
+        let displayVal = '';
+        if (val === null || val === undefined) {
+          return <span className="text-gray-400 italic">null</span>;
+        } else if (typeof val === 'object') {
+          displayVal = JSON.stringify(val);
+        } else {
+          displayVal = String(val);
+        }
+        
+        const isLong = displayVal.length > 50;
+
+        return (
+          <div className="flex justify-between items-center group gap-2">
+            <span className="truncate max-w-[250px] inline-block">{displayVal}</span>
+            {isLong && (
+              <button 
+                onClick={() => setCellModal({ isOpen: true, content: displayVal, colName: col })}
+                className="opacity-0 group-hover:opacity-100 p-1 bg-blue-500/10 text-blue-500 rounded hover:bg-blue-500/20 transition-opacity"
+                title="View full content"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        );
       }
     }));
   }, [columns]);
@@ -42,9 +70,10 @@ export default function ResultsTable({ data, columns }: Props) {
   const table = useReactTable({
     data,
     columns: tableColumns,
-    state: { sorting, globalFilter },
+    state: { sorting, globalFilter, columnVisibility },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -84,7 +113,7 @@ export default function ResultsTable({ data, columns }: Props) {
   );
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden relative">
       <div className={`p-2 border-b flex justify-between items-center ${isDark ? 'border-gray-800 bg-gray-900/50' : 'border-gray-200 bg-gray-50'}`}>
         <div className="flex items-center gap-2">
           <input
@@ -98,13 +127,54 @@ export default function ResultsTable({ data, columns }: Props) {
           </span>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 relative">
+          <button 
+            onClick={() => setIsColsDropdownOpen(!isColsDropdownOpen)} 
+            className={`p-1.5 rounded flex items-center gap-1 text-sm ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-200'}`} 
+            title="Columns"
+          >
+            <Columns className="w-4 h-4" /> Columns
+          </button>
+          
+          {isColsDropdownOpen && (
+            <div className={`absolute top-full right-10 mt-1 w-48 max-h-64 overflow-auto rounded-md shadow-lg border z-20 p-2 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
+              <div className="text-xs font-semibold mb-2 px-1 opacity-60 uppercase">Toggle Columns</div>
+              <label className="flex items-center gap-2 px-2 py-1 hover:bg-black/10 rounded cursor-pointer text-sm">
+                <input
+                  type="checkbox"
+                  checked={table.getIsAllColumnsVisible()}
+                  onChange={table.getToggleAllColumnsVisibilityHandler()}
+                  className="rounded border-gray-300"
+                />
+                Select All
+              </label>
+              <div className="h-px bg-gray-500/20 my-1"></div>
+              {table.getAllLeafColumns().map(column => (
+                <label key={column.id} className="flex items-center gap-2 px-2 py-1 hover:bg-black/10 rounded cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={column.getIsVisible()}
+                    onChange={column.getToggleVisibilityHandler()}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="truncate">{column.id}</span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div className="w-px h-5 bg-gray-500/20 mx-1"></div>
+
           <button onClick={exportExcel} className="p-1.5 rounded hover:bg-blue-500/10 text-blue-500" title="Export Excel"><Download className="w-4 h-4" /></button>
           <button onClick={exportCSV} className="p-1.5 rounded hover:bg-green-500/10 text-green-500" title="Export CSV"><FileText className="w-4 h-4" /></button>
           <button onClick={exportJSON} className="p-1.5 rounded hover:bg-yellow-500/10 text-yellow-600" title="Export JSON"><FileJson className="w-4 h-4" /></button>
           <button onClick={copyToClipboard} className="p-1.5 rounded hover:bg-gray-500/10" title="Copy"><Copy className="w-4 h-4" /></button>
         </div>
       </div>
+
+      {isColsDropdownOpen && (
+        <div className="fixed inset-0 z-10" onClick={() => setIsColsDropdownOpen(false)}></div>
+      )}
 
       <div className="flex-1 overflow-auto custom-scrollbar relative">
         <table className="w-full text-sm text-left whitespace-nowrap">
@@ -129,7 +199,7 @@ export default function ResultsTable({ data, columns }: Props) {
             {table.getRowModel().rows.map(row => (
               <tr key={row.id} className={`border-b border-inherit ${isDark ? 'hover:bg-gray-800/50' : 'hover:bg-gray-50'}`}>
                 {row.getVisibleCells().map(cell => (
-                  <td key={cell.id} className={`px-4 py-2 border-r border-inherit last:border-r-0 max-w-[300px] truncate`}>
+                  <td key={cell.id} className={`px-4 py-2 border-r border-inherit last:border-r-0 max-w-[300px]`}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
@@ -162,6 +232,25 @@ export default function ResultsTable({ data, columns }: Props) {
           ))}
         </select>
       </div>
+
+      {/* Cell Content Modal */}
+      {cellModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-4xl max-h-[90vh] flex flex-col rounded-xl shadow-2xl ${isDark ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'} border`}>
+            <div className={`p-4 border-b flex justify-between items-center ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
+              <h3 className="font-bold">Column: {cellModal.colName}</h3>
+              <button onClick={() => setCellModal({ isOpen: false, content: '', colName: '' })} className="p-1 rounded-md hover:bg-black/10">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 flex-1 overflow-auto custom-scrollbar">
+              <pre className="text-sm whitespace-pre-wrap font-mono break-all">
+                {cellModal.content}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
