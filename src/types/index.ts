@@ -5,7 +5,7 @@ export interface Connection {
   port: number;
   serviceName: string;
   user: string;
-  password?: string; // stored encrypted locally ideally, but for MVP local storage
+  password?: string;
 }
 
 export type ParamType = 'string' | 'number' | 'date' | 'timestamp' | 'boolean';
@@ -22,13 +22,30 @@ export interface SqlTab {
   query: string;
 }
 
+export interface FavoriteSection {
+  id: string;
+  name: string;
+}
+
+export interface Favorite {
+  id: string;
+  name: string;
+  sql: string;
+  sectionId: string;
+  createdAt: string;
+  lastRunAt?: string;
+}
+
 export interface HistoryRecord {
   id: string;
   sql: string;
   timestamp: string;
   connectionId: string;
   duration: number;
-  isFavorite: boolean;
+  /** @deprecated use linkedFavoriteId instead */
+  isFavorite?: boolean;
+  /** id of the Favorite record this history item is linked to */
+  linkedFavoriteId?: string;
   status: 'success' | 'error';
   rowCount?: number;
   error?: string;
@@ -66,7 +83,7 @@ export interface ExportOptions {
   headerQuoted: boolean;
   exportAsInList: boolean;
   inListColumn: string;
-  delimiter: string; // 'comma', 'tab', 'semicolon', 'custom'
+  delimiter: string;
   delimiterAscii: number;
   includeDelimiterAfterLastCol: boolean;
   columnsToExclude: string;

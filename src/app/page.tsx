@@ -109,7 +109,6 @@ export default function Home() {
         timestamp: new Date().toISOString(),
         connectionId: activeConnection!.id,
         duration: data.duration,
-        isFavorite: false,
         status: 'success',
         rowCount: data.rowCount
       });
@@ -122,7 +121,6 @@ export default function Home() {
         timestamp: new Date().toISOString(),
         connectionId: activeConnection!.id,
         duration: 0,
-        isFavorite: false,
         status: 'error',
         error: err.message
       });

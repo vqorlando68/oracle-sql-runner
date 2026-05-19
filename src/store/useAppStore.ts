@@ -1,38 +1,56 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Connection, HistoryRecord, SqlTab, FormatOptions, ExportOptions, GridOptions, AppToast } from '../types';
+import {
+  Connection, HistoryRecord, SqlTab, FormatOptions,
+  ExportOptions, GridOptions, AppToast, Favorite, FavoriteSection
+} from '../types';
+
+export const VARIOS_SECTION_ID = 'section-varios';
 
 interface AppState {
   connections: Connection[];
   activeConnectionId: string | null;
   history: HistoryRecord[];
+  favorites: Favorite[];
+  favoriteSections: FavoriteSection[];
   isDark: boolean;
-  
+
   tabs: SqlTab[];
   activeTabId: string;
-  
+
   formatOptions: FormatOptions;
   exportOptions: ExportOptions;
   gridOptions: GridOptions;
   toast: AppToast | null;
 
+  // Connections
   addConnection: (conn: Connection) => void;
   updateConnection: (conn: Connection) => void;
   removeConnection: (id: string) => void;
   setActiveConnection: (id: string) => void;
-  
+
+  // History – removing a history item never touches favorites
   addHistory: (record: HistoryRecord) => void;
   removeHistory: (id: string) => void;
-  toggleFavorite: (id: string) => void;
   clearHistory: () => void;
-  
+
+  // Favorites
+  addFavorite: (historyId: string, name: string, sectionId: string) => void;
+  removeFavorite: (favoriteId: string) => void;
+  /** Call when user opens/runs a favorite – updates lastRunAt */
+  runFavorite: (favoriteId: string) => void;
+
+  // Sections
+  addFavoriteSection: (id: string, name: string) => void;
+  removeFavoriteSection: (id: string) => void;
+
   toggleTheme: () => void;
 
   addTab: (tab: SqlTab) => void;
   removeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTabContent: (id: string, query: string) => void;
-  
+
   setFormatOptions: (options: FormatOptions) => void;
   setExportOptions: (options: ExportOptions) => void;
   setGridOptions: (options: GridOptions) => void;
@@ -40,14 +58,20 @@ interface AppState {
   hideToast: () => void;
 }
 
+const DEFAULT_SECTIONS: FavoriteSection[] = [
+  { id: VARIOS_SECTION_ID, name: 'Varios' },
+];
+
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       connections: [],
       activeConnectionId: null,
       history: [],
+      favorites: [],
+      favoriteSections: DEFAULT_SECTIONS,
       isDark: true,
-      
+
       tabs: [{ id: 'default', title: 'Query 1', query: '-- Write your Oracle SQL here\nSELECT * FROM DUAL;' }],
       activeTabId: 'default',
 
@@ -90,6 +114,7 @@ export const useAppStore = create<AppState>()(
       },
       toast: null,
 
+      // ── Connections ──────────────────────────────────────────────────────────
       addConnection: (conn) => set((state) => ({ connections: [...state.connections, conn] })),
       updateConnection: (conn) => set((state) => ({
         connections: state.connections.map((c) => (c.id === conn.id ? conn : c)),
@@ -99,16 +124,67 @@ export const useAppStore = create<AppState>()(
         activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
       })),
       setActiveConnection: (id) => set({ activeConnectionId: id }),
-      
+
+      // ── History ──────────────────────────────────────────────────────────────
       addHistory: (record) => set((state) => ({ history: [record, ...state.history] })),
-      removeHistory: (id) => set((state) => ({ history: state.history.filter((h) => h.id !== id) })),
-      toggleFavorite: (id) => set((state) => ({
-        history: state.history.map((h) => (h.id === id ? { ...h, isFavorite: !h.isFavorite } : h)),
+      removeHistory: (id) => set((state) => ({
+        // Only removes from history – favorites are independent and unaffected
+        history: state.history.filter((h) => h.id !== id),
       })),
-      clearHistory: () => set((state) => ({ history: state.history.filter(h => h.isFavorite) })), // Keep favorites when clearing
-      
+      clearHistory: () => set({ history: [] }),
+
+      // ── Favorites ────────────────────────────────────────────────────────────
+      addFavorite: (historyId, name, sectionId) => set((state) => {
+        const histItem = state.history.find(h => h.id === historyId);
+        if (!histItem) return {};
+        const newFav: Favorite = {
+          id: crypto.randomUUID(),
+          name,
+          sql: histItem.sql,
+          sectionId,
+          createdAt: new Date().toISOString(),
+        };
+        return {
+          favorites: [...state.favorites, newFav],
+          history: state.history.map(h =>
+            h.id === historyId ? { ...h, linkedFavoriteId: newFav.id } : h
+          ),
+        };
+      }),
+
+      removeFavorite: (favoriteId) => set((state) => ({
+        favorites: state.favorites.filter(f => f.id !== favoriteId),
+        // Clear the link on any history item that pointed to this favorite
+        history: state.history.map(h =>
+          h.linkedFavoriteId === favoriteId ? { ...h, linkedFavoriteId: undefined } : h
+        ),
+      })),
+
+      runFavorite: (favoriteId) => set((state) => ({
+        favorites: state.favorites.map(f =>
+          f.id === favoriteId ? { ...f, lastRunAt: new Date().toISOString() } : f
+        ),
+      })),
+
+      // ── Sections ─────────────────────────────────────────────────────────────
+      addFavoriteSection: (id, name) => set((state) => {
+        // "Varios" section always exists — ensure it stays first
+        const withoutVarios = state.favoriteSections.filter(s => s.id !== VARIOS_SECTION_ID);
+        const varios = state.favoriteSections.find(s => s.id === VARIOS_SECTION_ID) ?? { id: VARIOS_SECTION_ID, name: 'Varios' };
+        return { favoriteSections: [varios, ...withoutVarios, { id, name }] };
+      }),
+
+      removeFavoriteSection: (id) => set((state) => {
+        // Cannot remove "Varios" and cannot remove a section that has favorites
+        if (id === VARIOS_SECTION_ID) return {};
+        if (state.favorites.some(f => f.sectionId === id)) return {};
+        return { favoriteSections: state.favoriteSections.filter(s => s.id !== id) };
+      }),
+
+      // ── Theme ────────────────────────────────────────────────────────────────
       toggleTheme: () => set((state) => ({ isDark: !state.isDark })),
 
+      // ── Tabs ─────────────────────────────────────────────────────────────────
       addTab: (tab) => set((state) => ({ tabs: [...state.tabs, tab], activeTabId: tab.id })),
       removeTab: (id) => set((state) => {
         const newTabs = state.tabs.filter((t) => t.id !== id);
@@ -122,7 +198,8 @@ export const useAppStore = create<AppState>()(
       updateTabContent: (id, query) => set((state) => ({
         tabs: state.tabs.map((t) => (t.id === id ? { ...t, query } : t)),
       })),
-      
+
+      // ── Options ──────────────────────────────────────────────────────────────
       setFormatOptions: (options) => set({ formatOptions: options }),
       setExportOptions: (options) => set({ exportOptions: options }),
       setGridOptions: (options) => set({ gridOptions: options }),
@@ -142,6 +219,16 @@ export const useAppStore = create<AppState>()(
       partialize: (state) => {
         const { toast, ...rest } = state;
         return rest;
+      },
+      // Ensure "Varios" always exists after rehydration
+      merge: (persisted: any, current) => {
+        const merged = { ...current, ...persisted };
+        const sections: FavoriteSection[] = merged.favoriteSections ?? DEFAULT_SECTIONS;
+        if (!sections.find((s: FavoriteSection) => s.id === VARIOS_SECTION_ID)) {
+          merged.favoriteSections = [{ id: VARIOS_SECTION_ID, name: 'Varios' }, ...sections];
+        }
+        if (!merged.favorites) merged.favorites = [];
+        return merged;
       }
     }
   )
