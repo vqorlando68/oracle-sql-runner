@@ -11,6 +11,7 @@ import { Connection } from '@/types';
 import ConnectionModal from './ConnectionModal';
 import FavoriteNameModal from './FavoriteNameModal';
 import FavoriteSyncModal from './FavoriteSyncModal';
+import SqlInstructionsModal from './SqlInstructionsModal';
 import { saveAs } from 'file-saver';
 import Editor from '@monaco-editor/react';
 
@@ -54,6 +55,7 @@ export default function Sidebar() {
     name: string;
   } | null>(null);
   const [isDeletingFromDb, setIsDeletingFromDb] = useState(false);
+  const [showSqlInstructions, setShowSqlInstructions] = useState(false);
 
   const handleSaveFavoritesToDb = () => {
     if (!activeConnection) {
@@ -78,7 +80,12 @@ export default function Sidebar() {
       setSyncModal(null);
     } catch (err: any) {
       console.error(err);
-      showToast(err.message || 'Error al guardar favoritos en la BD', 'error');
+      const msg = err.message || 'Error al guardar favoritos en la BD';
+      showToast(msg, 'error');
+      // Si el error es de tablas inexistentes, abrir el modal con instrucciones SQL
+      if (msg.includes('tablas.sql') || msg.includes('ORA-00942')) {
+        setShowSqlInstructions(true);
+      }
       throw err;
     }
   };
@@ -141,7 +148,12 @@ export default function Sidebar() {
       });
     } catch (err: any) {
       console.error(err);
-      showToast(err.message || 'Error al cargar favoritos de la BD', 'error');
+      const msg = err.message || 'Error al cargar favoritos de la BD';
+      showToast(msg, 'error');
+      // Si el error es de tablas inexistentes, abrir el modal con instrucciones SQL
+      if (msg.includes('tablas.sql') || msg.includes('ORA-00942')) {
+        setShowSqlInstructions(true);
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -702,6 +714,13 @@ export default function Sidebar() {
           </div>
         </div>
       )}
+
+      {/* Modal instrucciones SQL (tablas.sql) */}
+      <SqlInstructionsModal
+        isOpen={showSqlInstructions}
+        isDark={isDark}
+        onClose={() => setShowSqlInstructions(false)}
+      />
     </div>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { CloudDownload, CloudUpload, X, CheckSquare, Square, Folder } from 'lucide-react';
+import { CloudDownload, CloudUpload, X, CheckSquare, Square, Folder, HelpCircle } from 'lucide-react';
+import SqlInstructionsModal from './SqlInstructionsModal';
 import { Favorite, FavoriteSection } from '@/types';
 
 interface FavoriteSyncModalProps {
@@ -12,6 +13,7 @@ interface FavoriteSyncModalProps {
   localSections: FavoriteSection[];
   dbFavorites?: any[];
   dbSections?: any[];
+  initialErrorMsg?: string;
   onConfirm: (selectedIds: any[]) => Promise<void>;
   onCancel: () => void;
 }
@@ -34,6 +36,7 @@ export default function FavoriteSyncModal({
   localSections,
   dbFavorites = [],
   dbSections = [],
+  initialErrorMsg = '',
   onConfirm,
   onCancel,
 }: FavoriteSyncModalProps) {
@@ -45,7 +48,8 @@ export default function FavoriteSyncModal({
     }
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState(initialErrorMsg);
+  const [showSqlModal, setShowSqlModal] = useState(false);
 
   // Group items by section
   const [groupedData, setGroupedData] = useState<GroupedItems[]>(() => {
@@ -197,10 +201,29 @@ export default function FavoriteSyncModal({
         {/* Content list */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {errorMsg && (
-            <div className="p-3 text-xs rounded-lg border border-red-500/35 bg-red-500/10 text-red-400">
-              {errorMsg}
+            <div className="p-3 text-xs rounded-lg border border-red-500/35 bg-red-500/10 text-red-400 flex items-start gap-2.5">
+              <span className="flex-1 leading-relaxed">{errorMsg}</span>
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(true)}
+                title="Ver instrucciones para crear las tablas en Oracle"
+                className={`flex-shrink-0 mt-0.5 p-1 rounded-lg transition-all duration-200 hover:scale-110 active:scale-95
+                  ${
+                    isDark
+                      ? 'text-amber-400 hover:bg-amber-500/20 hover:text-amber-300'
+                      : 'text-amber-600 hover:bg-amber-100 hover:text-amber-700'
+                  }`}
+              >
+                <HelpCircle className="w-4 h-4" />
+              </button>
             </div>
           )}
+
+          <SqlInstructionsModal
+            isOpen={showSqlModal}
+            isDark={isDark}
+            onClose={() => setShowSqlModal(false)}
+          />
 
           {totalCount === 0 ? (
             <div className="text-center py-8 opacity-40 text-sm italic">
