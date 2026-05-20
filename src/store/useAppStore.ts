@@ -27,6 +27,9 @@ interface AppState {
   gridOptions: GridOptions;
   toast: AppToast | null;
 
+  // History retention
+  historyRetentionDays: number;
+
   // Connections
   addConnection: (conn: Connection) => void;
   updateConnection: (conn: Connection) => void;
@@ -37,6 +40,8 @@ interface AppState {
   addHistory: (record: HistoryRecord) => void;
   removeHistory: (id: string) => void;
   clearHistory: () => void;
+  setHistoryRetentionDays: (days: number) => void;
+  purgeExpiredHistory: () => void;
 
   // Favorites
   addFavorite: (historyId: string, name: string, sectionId: string) => void;
@@ -91,6 +96,7 @@ export const useAppStore = create<AppState>()(
       favorites: [],
       favoriteSections: DEFAULT_SECTIONS,
       isDark: true,
+      historyRetentionDays: 30,
 
       tabs: [{ id: 'default', title: 'Query 1', query: '-- Write your Oracle SQL here\nSELECT * FROM DUAL;' }],
       activeTabId: 'default',
@@ -146,12 +152,26 @@ export const useAppStore = create<AppState>()(
       setActiveConnection: (id) => set({ activeConnectionId: id }),
 
       // ── History ──────────────────────────────────────────────────────────────
-      addHistory: (record) => set((state) => ({ history: [record, ...state.history] })),
+      addHistory: (record) => set((state) => {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - state.historyRetentionDays);
+        const cutoffISO = cutoff.toISOString();
+        // Add new record and purge expired ones in one pass
+        const filtered = state.history.filter(h => h.timestamp >= cutoffISO);
+        return { history: [record, ...filtered] };
+      }),
       removeHistory: (id) => set((state) => ({
         // Only removes from history – favorites are independent and unaffected
         history: state.history.filter((h) => h.id !== id),
       })),
       clearHistory: () => set({ history: [] }),
+      setHistoryRetentionDays: (days) => set({ historyRetentionDays: days }),
+      purgeExpiredHistory: () => set((state) => {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - state.historyRetentionDays);
+        const cutoffISO = cutoff.toISOString();
+        return { history: state.history.filter(h => h.timestamp >= cutoffISO) };
+      }),
 
       // ── Favorites ────────────────────────────────────────────────────────────
       addFavorite: (historyId, name, sectionId) => set((state) => {

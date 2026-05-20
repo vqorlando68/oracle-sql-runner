@@ -22,21 +22,89 @@ function safeSerialize(obj: any) {
   return JSON.parse(serialized);
 }
 
-export async function executeOracleQuery(connectionParams: any, sql: string, binds: any = {}, enableDbmsOutput: boolean = false) {
-  let connection;
+// ── Session Management ──────────────────────────────────────────────────────────
+// Map: connectionKey → oracledb.Connection
+// The key is built from connection params to uniquely identify a connection target.
+const sessions = new Map<string, oracledb.Connection>();
+
+function buildSessionKey(connectionParams: any): string {
+  return `${connectionParams.user}@${connectionParams.host}:${connectionParams.port}/${connectionParams.serviceName}`;
+}
+
+async function getOrCreateSession(connectionParams: any): Promise<oracledb.Connection> {
+  const key = buildSessionKey(connectionParams);
+  const existing = sessions.get(key);
+
+  if (existing) {
+    // Check if the connection is still alive
+    try {
+      await existing.ping();
+      return existing;
+    } catch {
+      // Connection is dead, remove it
+      sessions.delete(key);
+    }
+  }
+
+  // Basic config to output objects instead of arrays
+  oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
+  // Automatically fetch CLOBs as strings to avoid returning complex LOB stream objects
+  oracledb.fetchAsString = [oracledb.CLOB];
+
+  const connection = await oracledb.getConnection({
+    user: connectionParams.user,
+    password: connectionParams.password,
+    connectString: `${connectionParams.host}:${connectionParams.port}/${connectionParams.serviceName}`
+  });
+
+  sessions.set(key, connection);
+  return connection;
+}
+
+export async function commitSession(connectionParams: any): Promise<void> {
+  const key = buildSessionKey(connectionParams);
+  const connection = sessions.get(key);
+  if (!connection) {
+    throw new Error('No hay una sesión activa para hacer COMMIT. Ejecute una sentencia primero.');
+  }
   try {
-    // Basic config to output objects instead of arrays
-    oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
-    
-    // Automatically fetch CLOBs as strings to avoid returning complex LOB stream objects
-    oracledb.fetchAsString = [oracledb.CLOB];
-    
-    // Connect to the database
-    connection = await oracledb.getConnection({
-      user: connectionParams.user,
-      password: connectionParams.password,
-      connectString: `${connectionParams.host}:${connectionParams.port}/${connectionParams.serviceName}`
-    });
+    await connection.commit();
+  } catch (err: any) {
+    throw new Error(err.message || 'Error al ejecutar COMMIT');
+  }
+}
+
+export async function rollbackSession(connectionParams: any): Promise<void> {
+  const key = buildSessionKey(connectionParams);
+  const connection = sessions.get(key);
+  if (!connection) {
+    throw new Error('No hay una sesión activa para hacer ROLLBACK. Ejecute una sentencia primero.');
+  }
+  try {
+    await connection.rollback();
+  } catch (err: any) {
+    throw new Error(err.message || 'Error al ejecutar ROLLBACK');
+  }
+}
+
+export async function closeSession(connectionParams: any): Promise<void> {
+  const key = buildSessionKey(connectionParams);
+  const connection = sessions.get(key);
+  if (connection) {
+    try {
+      await connection.close();
+    } catch (err) {
+      console.error('Error closing session', err);
+    }
+    sessions.delete(key);
+  }
+}
+
+// ── Query Execution ─────────────────────────────────────────────────────────────
+export async function executeOracleQuery(connectionParams: any, sql: string, binds: any = {}, enableDbmsOutput: boolean = false) {
+  let connection: oracledb.Connection;
+  try {
+    connection = await getOrCreateSession(connectionParams);
 
     if (enableDbmsOutput) {
       await connection.execute(`BEGIN DBMS_OUTPUT.ENABLE(NULL); END;`);
@@ -68,30 +136,27 @@ export async function executeOracleQuery(connectionParams: any, sql: string, bin
     const metaData = result.metaData || [];
     const columns = metaData.map((col: any) => col.name);
     
-    // For DML
+    // For DML — NO auto-commit — user must COMMIT/ROLLBACK explicitly
     const rowsAffected = result.rowsAffected || 0;
-
-    // If DML, commit
-    if (rowsAffected > 0) {
-      await connection.commit();
-    }
 
     return {
       rows: safeSerialize(rows),
       columns,
       duration,
       rowCount: rows.length || rowsAffected,
+      rowsAffected,
       dbmsOutput
     };
   } catch (err: any) {
-    throw new Error(err.message || 'Error executing Oracle query');
-  } finally {
-    if (connection) {
+    // If the connection is broken, clean up the session
+    const key = buildSessionKey(connectionParams);
+    if (sessions.has(key)) {
       try {
-        await connection.close();
-      } catch (err) {
-        console.error('Error closing connection', err);
-      }
+        const conn = sessions.get(key);
+        await conn?.close();
+      } catch { /* ignore */ }
+      sessions.delete(key);
     }
+    throw new Error(err.message || 'Error executing Oracle query');
   }
 }

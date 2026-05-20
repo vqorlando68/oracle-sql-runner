@@ -1,25 +1,93 @@
 "use client";
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import Sidebar from '@/components/Sidebar';
 import ParamModal from '@/components/ParamModal';
 import ResultsTable from '@/components/ResultsTable';
 import FavoriteNameModal from '@/components/FavoriteNameModal';
+import HistorySettingsModal from '@/components/HistorySettingsModal';
 import Editor from '@monaco-editor/react';
 import { extractSqlParams } from '@/lib/sql-parser';
+import { getStatementAtCursor, splitStatements } from '@/lib/sql-utils';
 import FormatterConfigModal from '@/components/FormatterConfigModal';
 import { format } from 'sql-formatter';
-import { Play, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle, Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus, Save } from 'lucide-react';
+import {
+  Play, PlayCircle, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle,
+  Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus,
+  Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus
+} from 'lucide-react';
 import { ExecResult } from '@/types';
 
+// ── Toolbar Icon Button ──────────────────────────────────────────────────────
+function TbBtn({
+  icon, label, onClick, disabled, active, variant, shortcut, isDark
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+  variant?: 'default' | 'primary' | 'success' | 'danger' | 'warning';
+  shortcut?: string;
+  isDark: boolean;
+}) {
+  const v = variant || 'default';
+  const base = 'relative p-2 rounded-lg flex items-center justify-center transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed group';
+
+  const colors: Record<string, string> = {
+    default: isDark
+      ? 'hover:bg-gray-700/70 text-gray-300 hover:text-gray-100'
+      : 'hover:bg-gray-200/80 text-gray-600 hover:text-gray-900',
+    primary: isDark
+      ? 'hover:bg-blue-500/20 text-blue-400 hover:text-blue-300'
+      : 'hover:bg-blue-100 text-blue-600 hover:text-blue-700',
+    success: isDark
+      ? 'hover:bg-green-500/20 text-green-400 hover:text-green-300'
+      : 'hover:bg-green-100 text-green-600 hover:text-green-700',
+    danger: isDark
+      ? 'hover:bg-red-500/20 text-red-400 hover:text-red-300'
+      : 'hover:bg-red-100 text-red-600 hover:text-red-700',
+    warning: isDark
+      ? 'hover:bg-yellow-500/20 text-yellow-400 hover:text-yellow-300'
+      : 'hover:bg-yellow-100 text-yellow-600 hover:text-yellow-700',
+  };
+
+  const activeStyle = active
+    ? (isDark ? 'bg-blue-500/15 ring-1 ring-blue-500/40' : 'bg-blue-100 ring-1 ring-blue-400/40')
+    : '';
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`${base} ${colors[v]} ${activeStyle}`}
+      title={shortcut ? `${label} (${shortcut})` : label}
+    >
+      {icon}
+      {/* Tooltip */}
+      <span className={`absolute -bottom-8 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded text-[10px] font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 ${
+        isDark ? 'bg-gray-700 text-gray-200 shadow-lg' : 'bg-gray-800 text-white shadow-lg'
+      }`}>
+        {label}{shortcut ? ` · ${shortcut}` : ''}
+      </span>
+    </button>
+  );
+}
+
+function TbSep({ isDark }: { isDark: boolean }) {
+  return <div className={`w-px h-6 mx-0.5 ${isDark ? 'bg-gray-700/60' : 'bg-gray-300/80'}`} />;
+}
+
+// ── Main Component ───────────────────────────────────────────────────────────
 export default function Home() {
   const {
     isAuthenticated, login,
     isDark, activeConnectionId, connections, addHistory,
     tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent, formatOptions,
     favorites, favoriteSections, addFavoriteFromSql, updateFavoriteSql, addFavoriteSection,
-    toast, hideToast
+    toast, hideToast,
+    history, historyRetentionDays, setHistoryRetentionDays, purgeExpiredHistory
   } = useAppStore();
   
   const [isExecuting, setIsExecuting] = useState(false);
@@ -30,6 +98,7 @@ export default function Home() {
   const [enableDbmsOutput, setEnableDbmsOutput] = useState(false);
   const [bottomTab, setBottomTab] = useState<'results' | 'dbms'>('results');
   const [formatModalOpen, setFormatModalOpen] = useState(false);
+  const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
   // Save modal: 'overwrite' = confirm overwrite existing fav | 'new' = create new fav
   const [saveModal, setSaveModal] = useState<'overwrite' | 'new' | null>(null);
 
@@ -38,6 +107,10 @@ export default function Home() {
   const [shake, setShake] = useState(false);
 
   const editorRef = useRef<any>(null);
+  const monacoRef = useRef<any>(null);
+
+  const executeStatementRef = useRef<() => void>(() => {});
+  const executeScriptRef = useRef<() => void>(() => {});
 
   const activeConnection = connections.find(c => c.id === activeConnectionId);
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
@@ -141,10 +214,25 @@ export default function Home() {
     );
   }
 
+  // ── Editor handlers ─────────────────────────────────────────────────────────
+
   const handleEditorDidMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
+    monacoRef.current = monaco;
+
+    // Ctrl+Enter → Execute (legacy)
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-      handleExecuteClick();
+      executeStatementRef.current();
+    });
+
+    // F9 → Execute current statement / selection
+    editor.addCommand(monaco.KeyCode.F9, () => {
+      executeStatementRef.current();
+    });
+
+    // F5 → Execute entire script
+    editor.addCommand(monaco.KeyCode.F5, () => {
+      executeScriptRef.current();
     });
   };
 
@@ -159,10 +247,8 @@ export default function Home() {
 
   const handleSave = () => {
     if (activeFavorite) {
-      // Tab comes from a favorite — ask to overwrite
       setSaveModal('overwrite');
     } else {
-      // New favorite from editor SQL
       setSaveModal('new');
     }
   };
@@ -171,7 +257,6 @@ export default function Home() {
     if (activeFavorite) {
       updateFavoriteSql(activeFavorite.id, activeTab.query);
       setSaveModal(null);
-      // Toast from store
       useAppStore.getState().showToast(`"${activeFavorite.name}" actualizado`, 'success');
     }
   };
@@ -182,17 +267,30 @@ export default function Home() {
     useAppStore.getState().showToast(`"${name}" guardado en favoritos`, 'success');
   };
 
-  const handleExecuteClick = () => {
+  // ── F9: Execute single statement (selection or statement at cursor) ────────
+  const handleExecuteStatement = () => {
     if (!activeConnection) {
-      setError("Please select an active connection from the sidebar.");
+      setError("Selecciona una conexión activa desde el panel lateral.");
       setBottomTab('results');
       return;
     }
     
     const editor = editorRef.current;
-    let selectedText = editor ? editor.getModel().getValueInRange(editor.getSelection()) : '';
-    let queryToRun = selectedText || activeTab.query;
+    if (!editor) return;
+
+    const selection = editor.getSelection();
+    const selectedText = editor.getModel().getValueInRange(selection);
     
+    let queryToRun: string;
+    if (selectedText && selectedText.trim()) {
+      queryToRun = selectedText.trim();
+    } else {
+      // Get statement at cursor position
+      const cursorLine = editor.getPosition()?.lineNumber || 1;
+      const fullText = editor.getModel().getValue();
+      queryToRun = getStatementAtCursor(fullText, cursorLine);
+    }
+
     if (!queryToRun.trim()) return;
 
     // Detect params
@@ -205,6 +303,113 @@ export default function Home() {
     }
   };
 
+  // ── F5: Execute entire script ──────────────────────────────────────────────
+  const handleExecuteScript = async () => {
+    if (!activeConnection) {
+      setError("Selecciona una conexión activa desde el panel lateral.");
+      setBottomTab('results');
+      return;
+    }
+
+    const editor = editorRef.current;
+    const fullText = editor ? editor.getModel().getValue() : activeTab.query;
+    if (!fullText.trim()) return;
+
+    const statements = splitStatements(fullText);
+    if (statements.length === 0) return;
+
+    setIsExecuting(true);
+    setError(null);
+    setResult(null);
+
+    let lastResult: ExecResult | null = null;
+    let totalAffected = 0;
+    let totalDuration = 0;
+    let hasError = false;
+
+    for (const stmt of statements) {
+      try {
+        const res = await fetch('/api/oracle/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connection: activeConnection,
+            sql: stmt,
+            binds: {},
+            enableDbmsOutput
+          })
+        });
+
+        const data = await res.json();
+        
+        if (!res.ok) {
+          throw new Error(data.error || 'Execution failed');
+        }
+
+        totalDuration += data.duration || 0;
+        totalAffected += data.rowsAffected || 0;
+
+        // Keep the last result with rows (SELECT) for display
+        if (data.rows && data.rows.length > 0) {
+          lastResult = data;
+        } else if (!lastResult) {
+          lastResult = data;
+        }
+
+        addHistory({
+          id: crypto.randomUUID(),
+          sql: stmt,
+          timestamp: new Date().toISOString(),
+          connectionId: activeConnection!.id,
+          duration: data.duration,
+          status: 'success',
+          rowCount: data.rowCount
+        });
+      } catch (err: any) {
+        setError(`Error en statement:\n${stmt.substring(0, 200)}...\n\n${err.message}`);
+        setBottomTab('results');
+        addHistory({
+          id: crypto.randomUUID(),
+          sql: stmt,
+          timestamp: new Date().toISOString(),
+          connectionId: activeConnection!.id,
+          duration: 0,
+          status: 'error',
+          error: err.message
+        });
+        hasError = true;
+        break;
+      }
+    }
+
+    if (!hasError && lastResult) {
+      setResult({
+        ...lastResult,
+        duration: totalDuration,
+        rowCount: lastResult.rows?.length || totalAffected
+      });
+      if (enableDbmsOutput && lastResult.dbmsOutput && lastResult.dbmsOutput.length > 0) {
+        setBottomTab('dbms');
+      } else {
+        setBottomTab('results');
+      }
+    }
+
+    setIsExecuting(false);
+
+    if (!hasError) {
+      useAppStore.getState().showToast(
+        `Script ejecutado: ${statements.length} statement${statements.length > 1 ? 's' : ''} · ${totalDuration}ms`,
+        'success'
+      );
+    }
+  };
+
+  // Sync ref values on render (when authenticated)
+  executeStatementRef.current = handleExecuteStatement;
+  executeScriptRef.current = handleExecuteScript;
+
+  // ── Execute single SQL ─────────────────────────────────────────────────────
   const executeSql = async (query: string, binds: Record<string, any>, bindTypes?: Record<string, string>) => {
     setIsExecuting(true);
     setError(null);
@@ -262,6 +467,75 @@ export default function Home() {
     }
   };
 
+  // ── COMMIT / ROLLBACK ──────────────────────────────────────────────────────
+  const handleCommit = async () => {
+    if (!activeConnection) return;
+    try {
+      const res = await fetch('/api/oracle/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection: activeConnection })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      useAppStore.getState().showToast('COMMIT exitoso ✓', 'success');
+    } catch (err: any) {
+      useAppStore.getState().showToast(`COMMIT error: ${err.message}`, 'error');
+    }
+  };
+
+  const handleRollback = async () => {
+    if (!activeConnection) return;
+    try {
+      const res = await fetch('/api/oracle/rollback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection: activeConnection })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      useAppStore.getState().showToast('ROLLBACK exitoso ↩', 'info');
+    } catch (err: any) {
+      useAppStore.getState().showToast(`ROLLBACK error: ${err.message}`, 'error');
+    }
+  };
+
+  // ── Clipboard ──────────────────────────────────────────────────────────────
+  const handleCut = () => {
+    const editor = editorRef.current;
+    if (editor) {
+      editor.focus();
+      editor.trigger('toolbar', 'editor.action.clipboardCutAction', null);
+    }
+  };
+  const handleCopy = () => {
+    const editor = editorRef.current;
+    if (editor) {
+      editor.focus();
+      editor.trigger('toolbar', 'editor.action.clipboardCopyAction', null);
+    }
+  };
+  const handlePaste = async () => {
+    const editor = editorRef.current;
+    if (editor) {
+      try {
+        const text = await navigator.clipboard.readText();
+        editor.focus();
+        const selection = editor.getSelection();
+        editor.executeEdits('toolbar', [{
+          range: selection,
+          text: text,
+          forceMoveMarkers: true
+        }]);
+      } catch {
+        // Fallback: use Monaco action
+        editor.focus();
+        editor.trigger('toolbar', 'editor.action.clipboardPasteAction', null);
+      }
+    }
+  };
+
+  const iconSize = 'w-[18px] h-[18px]';
   const bg = isDark ? 'bg-gray-950 text-gray-200' : 'bg-white text-gray-800';
 
   return (
@@ -269,75 +543,112 @@ export default function Home() {
       <Sidebar />
       
       <div className="flex-1 flex flex-col min-w-0">
-        <div className={`h-14 border-b flex items-center justify-between px-4 ${isDark ? 'border-gray-800 bg-gray-900/40' : 'border-gray-200 bg-gray-50'}`}>
-          <div className="flex items-center gap-3">
+        {/* ── Icon Toolbar ───────────────────────────────────────────── */}
+        <div className={`h-11 border-b flex items-center px-2 gap-0.5 overflow-x-auto custom-scrollbar ${
+          isDark ? 'border-gray-800 bg-gray-900/60' : 'border-gray-200 bg-gray-50/80'
+        }`}>
+          {/* Connection indicator */}
+          <div className="flex items-center mr-1">
             {activeConnection ? (
-              <div className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-full bg-blue-500/10 text-blue-500 font-medium">
-                <CheckCircle className="w-4 h-4" /> {activeConnection.name}
+              <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-500 font-medium">
+                <CheckCircle className="w-3.5 h-3.5" /> {activeConnection.name}
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-full bg-orange-500/10 text-orange-500 font-medium">
-                <AlertTriangle className="w-4 h-4" /> No connection selected
+              <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-orange-500/10 text-orange-500 font-medium">
+                <AlertTriangle className="w-3.5 h-3.5" /> Sin conexión
               </div>
             )}
           </div>
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm cursor-pointer opacity-80 hover:opacity-100">
+
+          <TbSep isDark={isDark} />
+
+          {/* ── Group: New / Clear ── */}
+          <TbBtn isDark={isDark} icon={<FilePlus className={iconSize} />} label="Nuevo Tab" onClick={() => addTab({ id: crypto.randomUUID(), title: 'Query', query: '' })} />
+          <TbBtn isDark={isDark} icon={<Eraser className={iconSize} />} label="Limpiar" onClick={() => updateTabContent(activeTab.id, '')} />
+
+          <TbSep isDark={isDark} />
+
+          {/* ── Group: Clipboard ── */}
+          <TbBtn isDark={isDark} icon={<Scissors className={iconSize} />} label="Cortar" onClick={handleCut} />
+          <TbBtn isDark={isDark} icon={<Clipboard className={iconSize} />} label="Copiar" onClick={handleCopy} />
+          <TbBtn isDark={isDark} icon={<ClipboardPaste className={iconSize} />} label="Pegar" onClick={handlePaste} />
+
+          <TbSep isDark={isDark} />
+
+          {/* ── Group: Format / Save ── */}
+          <TbBtn isDark={isDark} icon={<Wand2 className={iconSize} />} label="Formatear SQL" onClick={handleFormat} variant="primary" />
+          <TbBtn isDark={isDark} icon={<Settings2 className={iconSize} />} label="Config. Formato" onClick={() => setFormatModalOpen(true)} />
+          <TbBtn
+            isDark={isDark}
+            icon={activeFavorite ? <BookmarkCheck className={iconSize} /> : <BookmarkPlus className={iconSize} />}
+            label={activeFavorite ? `Sobreescribir "${activeFavorite.name}"` : 'Guardar como favorito'}
+            onClick={handleSave}
+            disabled={!activeTab?.query?.trim()}
+            variant="warning"
+          />
+
+          <TbSep isDark={isDark} />
+
+          {/* ── Group: Execute ── */}
+          <TbBtn
+            isDark={isDark}
+            icon={isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <Play className={iconSize} />}
+            label="Ejecutar Statement"
+            shortcut="F9"
+            onClick={handleExecuteStatement}
+            disabled={isExecuting || !activeConnection}
+            variant="primary"
+          />
+          <TbBtn
+            isDark={isDark}
+            icon={isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <PlayCircle className={iconSize} />}
+            label="Ejecutar Script"
+            shortcut="F5"
+            onClick={handleExecuteScript}
+            disabled={isExecuting || !activeConnection}
+            variant="primary"
+          />
+
+          <TbSep isDark={isDark} />
+
+          {/* ── Group: Transaction ── */}
+          <TbBtn
+            isDark={isDark}
+            icon={<CheckCircle2 className={iconSize} />}
+            label="COMMIT"
+            onClick={handleCommit}
+            disabled={!activeConnection}
+            variant="success"
+          />
+          <TbBtn
+            isDark={isDark}
+            icon={<Undo2 className={iconSize} />}
+            label="ROLLBACK"
+            onClick={handleRollback}
+            disabled={!activeConnection}
+            variant="danger"
+          />
+
+          <TbSep isDark={isDark} />
+
+          {/* ── Group: Settings ── */}
+          <TbBtn isDark={isDark} icon={<CalendarClock className={iconSize} />} label="Config. Historial" onClick={() => setHistorySettingsOpen(true)} />
+          
+          {/* DBMS Output toggle (compact) */}
+          <div className="ml-auto flex items-center">
+            <label className={`flex items-center gap-1.5 text-xs cursor-pointer px-2.5 py-1 rounded-full transition-colors ${
+              enableDbmsOutput
+                ? (isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-600')
+                : 'opacity-60 hover:opacity-100'
+            }`}>
               <input 
                 type="checkbox" 
                 checked={enableDbmsOutput} 
                 onChange={(e) => setEnableDbmsOutput(e.target.checked)} 
-                className="rounded border-gray-300"
+                className="rounded border-gray-300 w-3 h-3"
               />
-              DBMS_OUTPUT
+              DBMS_OUT
             </label>
-            <div className="w-px h-5 bg-gray-500/20"></div>
-            <div className={`flex items-center rounded-md border ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-white'} overflow-hidden`}>
-              <button 
-                onClick={handleFormat}
-                className={`px-3 py-1.5 text-sm font-medium flex items-center gap-2 ${isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'} transition-colors`}
-                title="Format SQL"
-              >
-                <Wand2 className="w-4 h-4" /> Format
-              </button>
-              <div className={`w-px h-full ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`}></div>
-              <button 
-                onClick={() => setFormatModalOpen(true)}
-                className={`px-2 py-1.5 flex items-center justify-center ${isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'} transition-colors`}
-                title="Format Settings"
-              >
-                <Settings2 className="w-4 h-4 opacity-70" />
-              </button>
-            </div>
-            <button
-              onClick={() => updateTabContent(activeTab.id, '')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-200'} transition-colors`}
-            >
-              <Eraser className="w-4 h-4" /> Clear
-            </button>
-            {/* ── Save button ─────────────────────────────── */}
-            <button
-              onClick={handleSave}
-              disabled={!activeTab?.query?.trim()}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors disabled:opacity-40 ${
-                activeFavorite
-                  ? (isDark ? 'bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25 border border-yellow-500/30' : 'bg-yellow-50 text-yellow-600 hover:bg-yellow-100 border border-yellow-300')
-                  : (isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-200')
-              }`}
-              title={activeFavorite ? `Sobreescribir favorito "${activeFavorite.name}"` : 'Guardar como favorito'}
-            >
-              {activeFavorite
-                ? <><BookmarkCheck className="w-4 h-4" /> Guardar</>
-                : <><BookmarkPlus className="w-4 h-4" /> Guardar</>}
-            </button>
-            <button 
-              onClick={handleExecuteClick}
-              disabled={isExecuting || !activeConnection}
-              className="px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-            >
-              {isExecuting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              Execute <span className="opacity-60 text-xs ml-1">(Ctrl+Enter)</span>
-            </button>
           </div>
         </div>
 
@@ -420,7 +731,7 @@ export default function Home() {
               <div className="absolute inset-0 flex items-center justify-center bg-black/5 backdrop-blur-[1px] z-10">
                 <div className="flex flex-col items-center gap-3">
                   <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                  <span className="text-sm font-medium animate-pulse opacity-80">Executing query...</span>
+                  <span className="text-sm font-medium animate-pulse opacity-80">Ejecutando...</span>
                 </div>
               </div>
             ) : null}
@@ -432,7 +743,7 @@ export default function Home() {
                     <div className="flex gap-3 text-red-500 bg-red-500/10 p-4 rounded-lg border border-red-500/20">
                       <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
                       <div>
-                        <h3 className="font-bold mb-1">Execution Error</h3>
+                        <h3 className="font-bold mb-1">Error de Ejecución</h3>
                         <pre className="text-xs font-mono whitespace-pre-wrap">{error}</pre>
                       </div>
                     </div>
@@ -442,7 +753,7 @@ export default function Home() {
                 ) : (
                   <div className="h-full flex items-center justify-center opacity-30 text-sm flex-col gap-2">
                     <Database className="w-8 h-8 mb-2 opacity-50" />
-                    Run a query to see results
+                    Ejecuta una consulta para ver resultados
                   </div>
                 )}
               </>
@@ -466,7 +777,7 @@ export default function Home() {
                       <div key={idx} className="whitespace-pre-wrap">{line}</div>
                     ))
                   ) : (
-                    <div className="opacity-30 italic text-center mt-10">No DBMS_OUTPUT. Make sure to check the 'DBMS_OUTPUT' box before executing PL/SQL.</div>
+                    <div className="opacity-30 italic text-center mt-10">No DBMS_OUTPUT. Activa la casilla &apos;DBMS_OUT&apos; antes de ejecutar PL/SQL.</div>
                   )}
                 </div>
               </div>
@@ -484,6 +795,18 @@ export default function Home() {
       <FormatterConfigModal 
         isOpen={formatModalOpen}
         onClose={() => setFormatModalOpen(false)}
+      />
+      <HistorySettingsModal
+        isOpen={historySettingsOpen}
+        isDark={isDark}
+        currentDays={historyRetentionDays}
+        historyCount={history.length}
+        onSave={(days) => setHistoryRetentionDays(days)}
+        onPurge={() => {
+          purgeExpiredHistory();
+          useAppStore.getState().showToast('Historial expirado eliminado', 'success');
+        }}
+        onClose={() => setHistorySettingsOpen(false)}
       />
 
       {/* ── Modal: confirmar sobreescritura de favorito ── */}
