@@ -5,11 +5,12 @@ import { useAppStore, VARIOS_SECTION_ID } from '@/store/useAppStore';
 import {
   Database, History, Star, Plus, Trash2, Edit2, Settings2,
   CheckCircle, Eye, Download, X, Copy, StarOff,
-  FolderOpen, Clock
+  FolderOpen, Clock, CloudDownload, CloudUpload
 } from 'lucide-react';
 import { Connection } from '@/types';
 import ConnectionModal from './ConnectionModal';
 import FavoriteNameModal from './FavoriteNameModal';
+import FavoriteSyncModal from './FavoriteSyncModal';
 import { saveAs } from 'file-saver';
 import Editor from '@monaco-editor/react';
 
@@ -21,13 +22,136 @@ export default function Sidebar() {
     history, removeHistory,
     favorites, favoriteSections, addFavorite, removeFavorite, runFavorite, addFavoriteSection, removeFavoriteSection,
     toggleTheme, isDark, addTab, tabs, setActiveTab, showToast,
+    loadFavoritesFromDb, saveFavoritesToDb,
   } = useAppStore();
 
   const [tab, setTab] = useState<'connections' | 'history' | 'favorites'>('connections');
   const [isConnModalOpen, setConnModalOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const activeConnection = connections.find(c => c.id === activeConnectionId);
+
   const [editingConn, setEditingConn] = useState<Connection | null>(null);
-  const [sqlModal, setSqlModal] = useState<{ isOpen: boolean; sql: string }>({ isOpen: false, sql: '' });
+  const [sqlModal, setSqlModal] = useState<{
+    isOpen: boolean;
+    sql: string;
+    id?: string;
+    dbId?: number;
+    sectionName?: string;
+    name?: string;
+  }>({ isOpen: false, sql: '' });
   const [favModal, setFavModal] = useState<{ isOpen: boolean; historyId: string }>({ isOpen: false, historyId: '' });
+  const [syncModal, setSyncModal] = useState<{
+    isOpen: boolean;
+    mode: 'save' | 'load';
+    dbFavorites?: any[];
+    dbSections?: any[];
+  } | null>(null);
+
+  const handleSaveFavoritesToDb = () => {
+    if (!activeConnection) {
+      showToast('Selecciona una conexión activa primero.', 'error');
+      return;
+    }
+    if (favorites.length === 0) {
+      showToast('No tienes favoritos locales para guardar.', 'info');
+      return;
+    }
+    setSyncModal({
+      isOpen: true,
+      mode: 'save'
+    });
+  };
+
+  const handleConfirmSave = async (selectedIds: string[]) => {
+    if (!activeConnection) return;
+    try {
+      await saveFavoritesToDb(activeConnection, selectedIds);
+      showToast('Favoritos guardados en la BD con éxito.', 'success');
+      setSyncModal(null);
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || 'Error al guardar favoritos en la BD', 'error');
+      throw err;
+    }
+  };
+
+  const handleLoadFavoritesFromDb = async () => {
+    if (!activeConnection) {
+      showToast('Selecciona una conexión activa primero.', 'error');
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      // 1. Fetch DB sections
+      const secRes = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: 'SELECT id, name FROM TKR_FAVORITOS_SECCIONES ORDER BY id'
+        })
+      });
+
+      if (!secRes.ok) {
+        const errData = await secRes.json();
+        if (errData.error?.includes('ORA-00942')) {
+          throw new Error('Las tablas de favoritos (TKR_FAVORITOS) no existen en la base de datos. Ejecuta el script "tablas.sql" para crearlas.');
+        }
+        throw new Error(errData.error || 'Error al cargar secciones de favoritos de la base de datos.');
+      }
+      const secData = await secRes.json();
+
+      // 2. Fetch DB favorites
+      const favRes = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: 'SELECT id, name, sql_query, seccion_id, created_at, last_run_at FROM TKR_FAVORITOS ORDER BY id'
+        })
+      });
+
+      if (!favRes.ok) {
+        const errData = await favRes.json();
+        throw new Error(errData.error || 'Error al cargar favoritos de la base de datos.');
+      }
+      const favData = await favRes.json();
+
+      const dbSections = secData.rows || [];
+      const dbFavorites = favData.rows || [];
+
+      if (dbFavorites.length === 0) {
+        showToast('No hay favoritos guardados en la base de datos.', 'info');
+        return;
+      }
+
+      setSyncModal({
+        isOpen: true,
+        mode: 'load',
+        dbFavorites,
+        dbSections
+      });
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || 'Error al cargar favoritos de la BD', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleConfirmLoad = async (selectedIds: number[]) => {
+    if (!activeConnection) return;
+    try {
+      await loadFavoritesFromDb(activeConnection, selectedIds);
+      showToast('Favoritos cargados de la BD con éxito.', 'success');
+      setSyncModal(null);
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || 'Error al cargar favoritos de la BD', 'error');
+      throw err;
+    }
+  };
 
   const existingFavoriteNames = favorites.map(f => f.name);
 
@@ -215,6 +339,48 @@ export default function Sidebar() {
         {/* ── FAVORITES ── */}
         {tab === 'favorites' && (
           <div className="space-y-5">
+            {/* Botones de Sincronización con BD */}
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <button
+                onClick={handleSaveFavoritesToDb}
+                disabled={isSyncing || !activeConnectionId}
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                  !activeConnectionId
+                    ? 'opacity-40 cursor-not-allowed border-gray-700 text-gray-500'
+                    : isDark
+                    ? 'border-yellow-500/35 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20'
+                    : 'border-yellow-400 bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+                }`}
+                title={!activeConnectionId ? 'Selecciona una conexión activa para guardar' : 'Guardar favoritos locales en la base de datos conectada'}
+              >
+                {isSyncing ? (
+                  <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <CloudUpload className="w-3.5 h-3.5" />
+                )}
+                Guardar en BD
+              </button>
+              <button
+                onClick={handleLoadFavoritesFromDb}
+                disabled={isSyncing || !activeConnectionId}
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                  !activeConnectionId
+                    ? 'opacity-40 cursor-not-allowed border-gray-700 text-gray-500'
+                    : isDark
+                    ? 'border-blue-500/35 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'
+                    : 'border-blue-400 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                }`}
+                title={!activeConnectionId ? 'Selecciona una conexión activa para cargar' : 'Cargar favoritos desde la base de datos conectada'}
+              >
+                {isSyncing ? (
+                  <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <CloudDownload className="w-3.5 h-3.5" />
+                )}
+                Cargar de BD
+              </button>
+            </div>
+
             {favoriteSections.map(section => {
               const sectionFavs = favorites.filter(f => f.sectionId === section.id);
               return (
@@ -278,7 +444,17 @@ export default function Sidebar() {
                             <span className="opacity-40 italic">Clic para abrir</span>
                             <div className="flex items-center gap-1">
                               <button
-                                onClick={(e) => { e.stopPropagation(); setSqlModal({ isOpen: true, sql: fav.sql }); }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSqlModal({
+                                    isOpen: true,
+                                    sql: fav.sql,
+                                    id: fav.id,
+                                    dbId: fav.dbId,
+                                    sectionName: section.name,
+                                    name: fav.name
+                                  });
+                                }}
                                 className="p-1 hover:bg-black/10 rounded text-blue-500" title="Ver SQL"
                               >
                                 <Eye className="w-3.5 h-3.5" />
@@ -340,12 +516,24 @@ export default function Sidebar() {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className={`w-full max-w-4xl h-[80vh] flex flex-col rounded-xl shadow-2xl border ${isDark ? 'bg-gray-900 border-gray-700 text-gray-200' : 'bg-white border-gray-200 text-gray-800'}`}>
             <div className={`p-4 border-b flex justify-between items-center ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
-              <h3 className="font-bold">Full SQL Instruction</h3>
-              <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <h3 className="font-bold text-sm truncate">{sqlModal.name || 'Full SQL Instruction'}</h3>
+                <div className="flex items-center gap-3 text-xs opacity-60 mt-1 flex-wrap">
+                  {sqlModal.dbId && (
+                    <span className={`px-1.5 py-0.5 rounded font-mono ${isDark ? 'bg-gray-800 text-yellow-400' : 'bg-gray-150 text-yellow-700'}`}>
+                      DB ID: {sqlModal.dbId}
+                    </span>
+                  )}
+                  {sqlModal.sectionName && (
+                    <span>Sección: <strong className="opacity-90">{sqlModal.sectionName}</strong></span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 ml-4 flex-shrink-0">
                 <button onClick={() => { navigator.clipboard.writeText(sqlModal.sql); showToast('SQL copied!'); }} className="p-1.5 rounded-md hover:bg-black/10 text-blue-500" title="Copy">
                   <Copy className="w-4 h-4" />
                 </button>
-                <button onClick={() => { saveAs(new Blob([sqlModal.sql], { type: 'text/plain;charset=utf-8' }), `query_${Date.now()}.sql`); }} className="p-1.5 rounded-md hover:bg-black/10 text-green-500" title="Download">
+                <button onClick={() => { saveAs(new Blob([sqlModal.sql], { type: 'text/plain;charset=utf-8' }), `${sqlModal.name || 'query'}.sql`); }} className="p-1.5 rounded-md hover:bg-black/10 text-green-500" title="Download">
                   <Download className="w-4 h-4" />
                 </button>
                 <button onClick={() => setSqlModal({ isOpen: false, sql: '' })} className="p-1.5 rounded-md hover:bg-black/10">
@@ -364,6 +552,20 @@ export default function Sidebar() {
             </div>
           </div>
         </div>
+      )}
+
+      {syncModal && syncModal.isOpen && (
+        <FavoriteSyncModal
+          isOpen={syncModal.isOpen}
+          isDark={isDark}
+          mode={syncModal.mode}
+          localFavorites={favorites}
+          localSections={favoriteSections}
+          dbFavorites={syncModal.dbFavorites}
+          dbSections={syncModal.dbSections}
+          onConfirm={syncModal.mode === 'save' ? handleConfirmSave : handleConfirmLoad}
+          onCancel={() => setSyncModal(null)}
+        />
       )}
     </div>
   );
