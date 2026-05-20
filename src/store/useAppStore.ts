@@ -4,10 +4,14 @@ import {
   Connection, HistoryRecord, SqlTab, FormatOptions,
   ExportOptions, GridOptions, AppToast, Favorite, FavoriteSection
 } from '../types';
+import { encrypt, decrypt } from '../lib/encryption';
 
 export const VARIOS_SECTION_ID = 'section-varios';
 
 interface AppState {
+  isAuthenticated: boolean;
+  login: (password: string) => boolean;
+  logout: () => void;
   connections: Connection[];
   activeConnectionId: string | null;
   history: HistoryRecord[];
@@ -72,6 +76,15 @@ const DEFAULT_SECTIONS: FavoriteSection[] = [
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
+      isAuthenticated: false,
+      login: (password) => {
+        if (password === 'scriptsoracle') {
+          set({ isAuthenticated: true });
+          return true;
+        }
+        return false;
+      },
+      logout: () => set({ isAuthenticated: false }),
       connections: [],
       activeConnectionId: null,
       history: [],
@@ -509,8 +522,40 @@ export const useAppStore = create<AppState>()(
     {
       name: 'oracle-sql-runner-storage',
       partialize: (state) => {
-        const { toast, ...rest } = state;
+        const { toast, isAuthenticated, ...rest } = state;
         return rest;
+      },
+      storage: {
+        getItem: (name) => {
+          if (typeof window === 'undefined') return null;
+          const val = localStorage.getItem(name);
+          if (!val) return null;
+          try {
+            // Retrocompatibilidad con datos planos anteriores
+            if (val.trim().startsWith('{')) {
+              return JSON.parse(val);
+            }
+            const decrypted = decrypt(val);
+            return decrypted ? JSON.parse(decrypted) : null;
+          } catch (e) {
+            console.error("Error al obtener o descifrar almacenamiento:", e);
+            return null;
+          }
+        },
+        setItem: (name, value) => {
+          if (typeof window === 'undefined') return;
+          try {
+            const strVal = JSON.stringify(value);
+            const encrypted = encrypt(strVal);
+            localStorage.setItem(name, encrypted);
+          } catch (e) {
+            console.error("Error al cifrar y guardar almacenamiento:", e);
+          }
+        },
+        removeItem: (name) => {
+          if (typeof window === 'undefined') return;
+          localStorage.removeItem(name);
+        },
       },
       // Ensure "Varios" always exists after rehydration
       merge: (persisted: any, current) => {

@@ -15,6 +15,7 @@ import { ExecResult } from '@/types';
 
 export default function Home() {
   const {
+    isAuthenticated, login,
     isDark, activeConnectionId, connections, addHistory,
     tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent, formatOptions,
     favorites, favoriteSections, addFavoriteFromSql, updateFavoriteSql, addFavoriteSection,
@@ -32,6 +33,10 @@ export default function Home() {
   // Save modal: 'overwrite' = confirm overwrite existing fav | 'new' = create new fav
   const [saveModal, setSaveModal] = useState<'overwrite' | 'new' | null>(null);
 
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loginError, setLoginError] = useState(false);
+  const [shake, setShake] = useState(false);
+
   const editorRef = useRef<any>(null);
 
   const activeConnection = connections.find(c => c.id === activeConnectionId);
@@ -40,6 +45,101 @@ export default function Home() {
   const activeFavorite = activeTab?.favoriteId
     ? favorites.find(f => f.id === activeTab.favoriteId)
     : null;
+
+  const handleLoginSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const success = login(passwordInput);
+    if (success) {
+      setLoginError(false);
+    } else {
+      setLoginError(true);
+      setShake(true);
+      setTimeout(() => setShake(false), 500);
+    }
+  };
+
+  if (!isAuthenticated) {
+    const loginBg = isDark 
+      ? 'bg-gradient-to-br from-gray-950 via-gray-900 to-black text-gray-100' 
+      : 'bg-gradient-to-br from-blue-50 via-gray-50 to-gray-100 text-gray-800';
+
+    return (
+      <main className={`flex h-screen w-full items-center justify-center overflow-hidden p-4 relative ${loginBg} font-sans transition-colors duration-300`}>
+        {/* Decoración ambiental: Esferas de luz difuminadas */}
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full bg-blue-500/10 dark:bg-blue-600/10 blur-[120px] pointer-events-none animate-pulse duration-[8s]" />
+        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] rounded-full bg-yellow-500/5 dark:bg-yellow-500/5 blur-[140px] pointer-events-none animate-pulse duration-[10s]" />
+        
+        {/* Estilo para animación de agitación (shake) */}
+        <style>{`
+          @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-6px); }
+            20%, 40%, 60%, 80% { transform: translateX(6px); }
+          }
+          .animate-shake {
+            animation: shake 0.4s ease-in-out;
+          }
+        `}</style>
+
+        <div className="w-full max-w-md relative z-10">
+          <form 
+            onSubmit={handleLoginSubmit}
+            className={`backdrop-blur-xl border flex flex-col items-center rounded-3xl p-8 shadow-2xl transition-all duration-300 transform scale-100 ${
+              shake ? 'animate-shake border-red-500 shadow-red-500/10' : ''
+            } ${
+              isDark 
+                ? 'bg-gray-900/60 border-gray-800/80 text-gray-200 shadow-black/60' 
+                : 'bg-white/75 border-gray-200/80 text-gray-800 shadow-gray-300/40'
+            }`}
+          >
+            {/* Logotipo / Icono */}
+            <div className={`p-4 rounded-2xl mb-6 shadow-inner ${
+              isDark ? 'bg-gray-950/40 text-blue-400' : 'bg-gray-100/80 text-blue-600'
+            }`}>
+              <Database className="w-8 h-8 animate-pulse text-blue-500 dark:text-blue-400" />
+            </div>
+
+            {/* Cabecera */}
+            <h1 className="text-2xl font-bold text-center tracking-tight">Oracle SQL Runner AI</h1>
+            <p className="text-xs opacity-60 mt-1 mb-8 text-center font-medium uppercase tracking-wider">Acceso Protegido</p>
+
+            {/* Input de Clave */}
+            <div className="w-full space-y-2 mb-6">
+              <label className="text-xs font-semibold opacity-70 ml-1">Contraseña de acceso</label>
+              <input
+                type="password"
+                autoFocus
+                placeholder="Ingresa la clave..."
+                value={passwordInput}
+                onChange={(e) => {
+                  setPasswordInput(e.target.value);
+                  if (loginError) setLoginError(false);
+                }}
+                className={`w-full py-3 px-4 rounded-2xl border text-sm font-medium transition-all outline-none text-center tracking-widest ${
+                  loginError 
+                    ? 'border-red-500 bg-red-500/5 focus:ring-2 focus:ring-red-500/20' 
+                    : isDark 
+                      ? 'border-gray-800 bg-gray-950/40 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20' 
+                      : 'border-gray-200 bg-gray-50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20'
+                }`}
+              />
+              {loginError && (
+                <p className="text-[11px] text-red-500 text-center font-semibold mt-1">Clave incorrecta. Inténtalo de nuevo.</p>
+              )}
+            </div>
+
+            {/* Botón de Ingreso */}
+            <button
+              type="submit"
+              className="w-full py-3.5 px-4 rounded-2xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 active:scale-[0.98] transition-all cursor-pointer shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 flex items-center justify-center gap-2"
+            >
+              Ingresar al Programa
+            </button>
+          </form>
+        </div>
+      </main>
+    );
+  }
 
   const handleEditorDidMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
