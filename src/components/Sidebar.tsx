@@ -22,7 +22,7 @@ export default function Sidebar() {
     history, removeHistory,
     favorites, favoriteSections, addFavorite, removeFavorite, runFavorite, addFavoriteSection, removeFavoriteSection,
     toggleTheme, isDark, addTab, tabs, setActiveTab, showToast,
-    loadFavoritesFromDb, saveFavoritesToDb,
+    loadFavoritesFromDb, saveFavoritesToDb, deleteFavoriteFromDb,
   } = useAppStore();
 
   const [tab, setTab] = useState<'connections' | 'history' | 'favorites'>('connections');
@@ -47,6 +47,13 @@ export default function Sidebar() {
     dbFavorites?: any[];
     dbSections?: any[];
   } | null>(null);
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState<{
+    isOpen: boolean;
+    favoriteId: string;
+    dbId?: number;
+    name: string;
+  } | null>(null);
+  const [isDeletingFromDb, setIsDeletingFromDb] = useState(false);
 
   const handleSaveFavoritesToDb = () => {
     if (!activeConnection) {
@@ -153,6 +160,33 @@ export default function Sidebar() {
     }
   };
 
+  const handleDeleteConfirm = async (choice: 'both' | 'local') => {
+    if (!deleteConfirmModal) return;
+    const { favoriteId, dbId, name } = deleteConfirmModal;
+
+    if (choice === 'both' && dbId && activeConnection) {
+      setIsDeletingFromDb(true);
+      try {
+        await deleteFavoriteFromDb(activeConnection, dbId);
+        removeFavorite(favoriteId);
+        showToast(`"${name}" eliminado de la base de datos y favoritos`, 'success');
+      } catch (err: any) {
+        console.error(err);
+        showToast(err.message || 'Error al eliminar de la base de datos', 'error');
+        setIsDeletingFromDb(false);
+        return; // Don't close or clear on error so they can see it or try again.
+      } finally {
+        setIsDeletingFromDb(false);
+      }
+    } else {
+      // choice === 'local' or no dbId/connection
+      removeFavorite(favoriteId);
+      showToast(`"${name}" removido de favoritos locales`, 'info');
+    }
+
+    setDeleteConfirmModal(null);
+  };
+
   const existingFavoriteNames = favorites.map(f => f.name);
 
   const handleEdit = (conn: Connection) => { setEditingConn(conn); setConnModalOpen(true); };
@@ -161,9 +195,19 @@ export default function Sidebar() {
   const handleStarClick = (e: React.MouseEvent, historyId: string, linkedFavoriteId?: string) => {
     e.stopPropagation();
     if (linkedFavoriteId) {
-      // Already a favorite → remove it
-      removeFavorite(linkedFavoriteId);
-      showToast('Eliminado de favoritos', 'info');
+      // Already a favorite → check if synced to DB to ask for deletion
+      const fav = favorites.find(f => f.id === linkedFavoriteId);
+      if (fav && fav.dbId && activeConnection) {
+        setDeleteConfirmModal({
+          isOpen: true,
+          favoriteId: fav.id,
+          dbId: fav.dbId,
+          name: fav.name
+        });
+      } else {
+        removeFavorite(linkedFavoriteId);
+        showToast('Eliminado de favoritos', 'info');
+      }
     } else {
       setFavModal({ isOpen: true, historyId });
     }
@@ -419,7 +463,19 @@ export default function Sidebar() {
                             <span className="text-xs font-semibold text-yellow-500 truncate">{fav.name}</span>
                           </div>
                           <button
-                            onClick={() => { removeFavorite(fav.id); showToast('Eliminado de favoritos', 'info'); }}
+                            onClick={() => {
+                              if (fav.dbId && activeConnection) {
+                                setDeleteConfirmModal({
+                                  isOpen: true,
+                                  favoriteId: fav.id,
+                                  dbId: fav.dbId,
+                                  name: fav.name
+                                });
+                              } else {
+                                removeFavorite(fav.id);
+                                showToast('Eliminado de favoritos', 'info');
+                              }
+                            }}
                             className={`p-1 rounded flex-shrink-0 transition-colors ${isDark ? 'text-yellow-400/60 hover:text-red-400 hover:bg-red-500/10' : 'text-yellow-500/60 hover:text-red-500 hover:bg-red-50'}`}
                             title="Quitar de favoritos"
                           >
@@ -566,6 +622,85 @@ export default function Sidebar() {
           onConfirm={syncModal.mode === 'save' ? handleConfirmSave : handleConfirmLoad}
           onCancel={() => setSyncModal(null)}
         />
+      )}
+
+      {deleteConfirmModal && deleteConfirmModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className={`w-full max-w-md flex flex-col rounded-2xl shadow-2xl border overflow-hidden transform transition-all duration-300 scale-100 ${
+            isDark 
+              ? 'bg-gray-900 border-gray-800 text-gray-200 shadow-black/80' 
+              : 'bg-white border-gray-200 text-gray-800 shadow-gray-400/50'
+          }`}>
+            {/* Modal Header */}
+            <div className={`flex items-start gap-4 p-5 ${isDark ? 'border-b border-gray-800/80 bg-gray-950/20' : 'border-b border-gray-100 bg-gray-50/50'}`}>
+              <div className={`p-2.5 rounded-xl flex-shrink-0 ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-500'}`}>
+                <Trash2 className="w-5 h-5 animate-pulse" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-bold leading-6">¿Eliminar de la Base de Datos?</h3>
+                <p className="text-xs opacity-60 mt-0.5 truncate">Favorito: <strong className="opacity-90">{deleteConfirmModal.name}</strong></p>
+              </div>
+              <button 
+                onClick={() => setDeleteConfirmModal(null)} 
+                className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-gray-800 text-gray-400 hover:text-gray-200' : 'hover:bg-gray-100 text-gray-500 hover:text-gray-700'}`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-2">
+              <p className="text-xs leading-relaxed opacity-80">
+                Este favorito está registrado en la base de datos conectada (ID: {deleteConfirmModal.dbId}).
+              </p>
+              <p className="text-xs leading-relaxed opacity-60">
+                ¿Deseas eliminarlo físicamente de la base de datos o únicamente quitarlo de tu lista de favoritos locales?
+              </p>
+            </div>
+
+            {/* Modal Footer / Actions */}
+            <div className={`p-5 flex flex-col gap-2 ${isDark ? 'bg-gray-950/20' : 'bg-gray-50/30'}`}>
+              <button
+                disabled={isDeletingFromDb}
+                onClick={() => handleDeleteConfirm('both')}
+                className={`w-full flex items-center justify-center gap-2 py-2 px-4 rounded-xl text-xs font-semibold text-white shadow-lg bg-red-600 hover:bg-red-500 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer`}
+              >
+                {isDeletingFromDb ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Borrando de la BD...
+                  </>
+                ) : (
+                  <>
+                    <Database className="w-3.5 h-3.5" />
+                    Sí, borrar de la BD y local
+                  </>
+                )}
+              </button>
+              
+              <button
+                disabled={isDeletingFromDb}
+                onClick={() => handleDeleteConfirm('local')}
+                className={`w-full flex items-center justify-center gap-2 py-2 px-4 rounded-xl text-xs font-semibold border transition-all active:scale-[0.98] cursor-pointer ${
+                  isDark
+                    ? 'border-gray-700 hover:border-gray-500 bg-gray-800/40 text-gray-200 hover:bg-gray-800/60'
+                    : 'border-gray-300 hover:border-gray-400 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <StarOff className="w-3.5 h-3.5 text-yellow-500" />
+                No, solo quitar de favoritos locales
+              </button>
+
+              <button
+                disabled={isDeletingFromDb}
+                onClick={() => setDeleteConfirmModal(null)}
+                className={`w-full py-1 text-xs font-medium opacity-60 hover:opacity-100 transition-opacity text-center mt-1 cursor-pointer`}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

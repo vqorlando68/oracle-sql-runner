@@ -49,6 +49,7 @@ interface AppState {
   // DB Sync
   loadFavoritesFromDb: (connection: Connection, selectedDbFavoriteIds?: number[]) => Promise<void>;
   saveFavoritesToDb: (connection: Connection, selectedLocalFavoriteIds?: string[]) => Promise<void>;
+  deleteFavoriteFromDb: (connection: Connection, dbId: number) => Promise<void>;
 
   toggleTheme: () => void;
 
@@ -446,6 +447,26 @@ export const useAppStore = create<AppState>()(
               return fav;
             });
             set({ favorites: updatedFavorites });
+          }
+        } catch (error: any) {
+          throw error;
+        }
+      },
+
+      deleteFavoriteFromDb: async (connection, dbId) => {
+        try {
+          const deleteRes = await fetch('/api/oracle/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              connection,
+              sql: 'DELETE FROM TKR_FAVORITOS WHERE id = :id',
+              binds: { id: dbId }
+            })
+          });
+          if (!deleteRes.ok) {
+            const errData = await deleteRes.json();
+            throw new Error(errData.error || 'Error al eliminar el favorito de la base de datos');
           }
         } catch (error: any) {
           throw error;
