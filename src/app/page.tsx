@@ -15,7 +15,8 @@ import { format } from 'sql-formatter';
 import {
   Play, PlayCircle, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle,
   Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus,
-  Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus
+  Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
+  Undo, Redo, Hammer
 } from 'lucide-react';
 import { ExecResult } from '@/types';
 
@@ -405,6 +406,132 @@ export default function Home() {
     }
   };
 
+  // ── Compilar PL/SQL ────────────────────────────────────────────────────────
+  const handleCompile = async () => {
+    if (!activeConnection) {
+      setError("Selecciona una conexión activa desde el panel lateral.");
+      setBottomTab('results');
+      return;
+    }
+
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const selection = editor.getSelection();
+    const selectedText = editor.getModel().getValueInRange(selection);
+    
+    let queryToRun: string;
+    if (selectedText && selectedText.trim()) {
+      queryToRun = selectedText.trim();
+    } else {
+      const cursorLine = editor.getPosition()?.lineNumber || 1;
+      const fullText = editor.getModel().getValue();
+      queryToRun = getStatementAtCursor(fullText, cursorLine);
+    }
+
+    if (!queryToRun.trim()) return;
+
+    setIsExecuting(true);
+    setError(null);
+    setResult(null);
+
+    try {
+      // 1. Run the compilation/execution query
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: queryToRun,
+          binds: {},
+          enableDbmsOutput
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Compilation failed');
+      }
+
+      setResult(data);
+      if (enableDbmsOutput && data.dbmsOutput && data.dbmsOutput.length > 0) {
+        setBottomTab('dbms');
+      } else {
+        setBottomTab('results');
+      }
+
+      addHistory({
+        id: crypto.randomUUID(),
+        sql: queryToRun,
+        timestamp: new Date().toISOString(),
+        connectionId: activeConnection!.id,
+        duration: data.duration,
+        status: 'success',
+        rowCount: data.rowCount
+      });
+
+      // 2. Check for PL/SQL object creation
+      const cleanSql = queryToRun.replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)--.*$/gm, ''); // remove comments
+      const match = cleanSql.match(/CREATE\s+(?:OR\s+REPLACE\s+)?(PROCEDURE|FUNCTION|PACKAGE(?:\s+BODY)?|TRIGGER|TYPE)\s+([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)?)/i);
+      
+      if (match) {
+        let type = match[1].toUpperCase();
+        let name = match[2].toUpperCase().split('.').pop() || ''; // remove schema prefix if any
+
+        // Check if there are compilation errors in user_errors
+        const errorCheckSql = `
+          SELECT line, position, text 
+          FROM user_errors 
+          WHERE name = :name AND type = :type 
+          ORDER BY sequence
+        `;
+
+        const errRes = await fetch('/api/oracle/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connection: activeConnection,
+            sql: errorCheckSql,
+            binds: { name, type }
+          })
+        });
+
+        const errData = await errRes.json();
+        if (errRes.ok && errData.rows && errData.rows.length > 0) {
+          const formattedErrors = errData.rows.map((row: any) => {
+            const line = row.LINE || row.line || 0;
+            const pos = row.POSITION || row.position || 0;
+            const text = row.TEXT || row.text || '';
+            return `Línea ${line}, Columna ${pos}: ${text}`;
+          }).join('\n');
+
+          setError(`Compilado con errores en ${type} ${name}:\n\n${formattedErrors}`);
+          setBottomTab('results');
+          useAppStore.getState().showToast(`Compilado con errores en ${name}`, 'error');
+          return;
+        }
+      }
+
+      // No compilation errors
+      useAppStore.getState().showToast('Compilado exitosamente ✓', 'success');
+
+    } catch (err: any) {
+      setError(err.message);
+      setBottomTab('results');
+      addHistory({
+        id: crypto.randomUUID(),
+        sql: queryToRun,
+        timestamp: new Date().toISOString(),
+        connectionId: activeConnection!.id,
+        duration: 0,
+        status: 'error',
+        error: err.message
+      });
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
   // Sync ref values on render (when authenticated)
   executeStatementRef.current = handleExecuteStatement;
   executeScriptRef.current = handleExecuteScript;
@@ -500,6 +627,23 @@ export default function Home() {
     }
   };
 
+  // ── Undo / Redo ────────────────────────────────────────────────────────────
+  const handleUndo = () => {
+    const editor = editorRef.current;
+    if (editor) {
+      editor.focus();
+      editor.trigger('toolbar', 'undo', null);
+    }
+  };
+
+  const handleRedo = () => {
+    const editor = editorRef.current;
+    if (editor) {
+      editor.focus();
+      editor.trigger('toolbar', 'redo', null);
+    }
+  };
+
   // ── Clipboard ──────────────────────────────────────────────────────────────
   const handleCut = () => {
     const editor = editorRef.current;
@@ -568,7 +712,10 @@ export default function Home() {
 
           <TbSep isDark={isDark} />
 
-          {/* ── Group: Clipboard ── */}
+          {/* ── Group: Clipboard & History ── */}
+          <TbBtn isDark={isDark} icon={<Undo className={iconSize} />} label="Deshacer" onClick={handleUndo} />
+          <TbBtn isDark={isDark} icon={<Redo className={iconSize} />} label="Rehacer" onClick={handleRedo} />
+          <TbSep isDark={isDark} />
           <TbBtn isDark={isDark} icon={<Scissors className={iconSize} />} label="Cortar" onClick={handleCut} />
           <TbBtn isDark={isDark} icon={<Clipboard className={iconSize} />} label="Copiar" onClick={handleCopy} />
           <TbBtn isDark={isDark} icon={<ClipboardPaste className={iconSize} />} label="Pegar" onClick={handlePaste} />
@@ -605,6 +752,14 @@ export default function Home() {
             label="Ejecutar Script"
             shortcut="F5"
             onClick={handleExecuteScript}
+            disabled={isExecuting || !activeConnection}
+            variant="primary"
+          />
+          <TbBtn
+            isDark={isDark}
+            icon={isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <Hammer className={iconSize} />}
+            label="Compilar PL/SQL"
+            onClick={handleCompile}
             disabled={isExecuting || !activeConnection}
             variant="primary"
           />

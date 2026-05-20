@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAppStore, VARIOS_SECTION_ID } from '@/store/useAppStore';
 import {
   Database, History, Star, Plus, Trash2, Edit2, Settings2,
   CheckCircle, Eye, Download, X, Copy, StarOff,
-  FolderOpen, Clock, CloudDownload, CloudUpload
+  FolderOpen, Clock, CloudDownload, CloudUpload,
+  ChevronRight, ChevronDown, Table, Code, Zap, Package, RefreshCw, Search, Play
 } from 'lucide-react';
 import { Connection } from '@/types';
 import ConnectionModal from './ConnectionModal';
@@ -23,14 +24,274 @@ export default function Sidebar() {
     history, removeHistory,
     favorites, favoriteSections, addFavorite, removeFavorite, runFavorite, addFavoriteSection, removeFavoriteSection,
     toggleTheme, isDark, addTab, tabs, setActiveTab, showToast,
-    loadFavoritesFromDb, saveFavoritesToDb, deleteFavoriteFromDb,
+    loadFavoritesFromDb, saveFavoritesToDb, deleteFavoriteFromDb, updateTabContent,
   } = useAppStore();
 
-  const [tab, setTab] = useState<'connections' | 'history' | 'favorites'>('connections');
+  const [tab, setTab] = useState<'connections' | 'schema' | 'history' | 'favorites'>('connections');
   const [isConnModalOpen, setConnModalOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // States for database objects
+  const [objects, setObjects] = useState<any>(null);
+  const [isLoadingObjects, setIsLoadingObjects] = useState(false);
+  const [isLoadingSource, setIsLoadingSource] = useState(false);
+  const [objectSearch, setObjectSearch] = useState('');
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
+    tables: false,
+    views: false,
+    procedures: false,
+    functions: false,
+    packages: false,
+    triggers: false
+  });
+  const [expandedPackages, setExpandedPackages] = useState<Record<string, boolean>>({});
+
   const activeConnection = connections.find(c => c.id === activeConnectionId);
+
+  const fetchObjects = async () => {
+    if (!activeConnection) return;
+    setIsLoadingObjects(true);
+    try {
+      const res = await fetch('/api/oracle/objects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection: activeConnection })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al obtener objetos');
+      setObjects(data.objects);
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setIsLoadingObjects(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'schema' && activeConnectionId) {
+      fetchObjects();
+    } else if (!activeConnectionId) {
+      setObjects(null);
+    }
+  }, [tab, activeConnectionId]);
+
+  const toggleFolder = (folderName: string) => {
+    setExpandedFolders(prev => ({
+      ...prev,
+      [folderName]: !prev[folderName]
+    }));
+  };
+
+  const handleObjectDoubleClick = async (name: string, type: string) => {
+    if (!activeConnection) return;
+    setIsLoadingSource(true);
+    try {
+      const res = await fetch('/api/oracle/object-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          name,
+          type
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al obtener código fuente');
+      
+      const titleName = `${name} (${type})`;
+      const existing = tabs.find(t => t.title === titleName);
+      if (existing) {
+        updateTabContent(existing.id, data.source);
+        setActiveTab(existing.id);
+      } else {
+        addTab({
+          id: crypto.randomUUID(),
+          title: titleName,
+          query: data.source
+        });
+      }
+      showToast(`Objeto ${name} cargado en el editor`, 'success');
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setIsLoadingSource(false);
+    }
+  };
+
+  const filterObjects = (list: string[] | undefined) => {
+    if (!list) return [];
+    if (!objectSearch) return list;
+    const q = objectSearch.toLowerCase();
+    return list.filter(item => item.toLowerCase().includes(q));
+  };
+
+  const renderFolder = (
+    label: string,
+    key: string,
+    list: string[] | undefined,
+    icon: React.ReactNode,
+    defaultType: string
+  ) => {
+    const isExpanded = expandedFolders[key];
+    const filtered = filterObjects(list);
+    const count = list ? list.length : 0;
+    
+    if (objectSearch && filtered.length === 0) return null;
+
+    return (
+      <div className="space-y-0.5">
+        <div
+          onClick={() => toggleFolder(key)}
+          className={`flex items-center gap-1.5 py-1.5 px-2 rounded-lg cursor-pointer transition-colors ${
+            isDark ? 'hover:bg-gray-800/50' : 'hover:bg-gray-200/50'
+          }`}
+        >
+          {isExpanded ? <ChevronDown className="w-3.5 h-3.5 opacity-60" /> : <ChevronRight className="w-3.5 h-3.5 opacity-60" />}
+          <span className="font-sans font-semibold text-xs flex-1 truncate">{label}</span>
+          <span className={`text-[10px] px-1.5 rounded-full ${isDark ? 'bg-gray-800 text-gray-400' : 'bg-gray-200 text-gray-500'}`}>
+            {count}
+          </span>
+        </div>
+        
+        {isExpanded && (
+          <div className="pl-4 space-y-0.5 border-l border-gray-500/10 ml-2">
+            {filtered.map((item) => {
+              let actualName = item;
+              let actualType = defaultType;
+              if (defaultType === 'PACKAGE' && item.endsWith(' (BODY)')) {
+                actualName = item.replace(' (BODY)', '');
+                actualType = 'PACKAGE BODY';
+              }
+
+              return (
+                <div
+                  key={item}
+                  onDoubleClick={() => handleObjectDoubleClick(actualName, actualType)}
+                  className={`flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer transition-colors ${
+                    isDark ? 'hover:bg-gray-800 text-gray-300' : 'hover:bg-gray-200 text-gray-700'
+                  }`}
+                  title="Doble clic para cargar en el editor"
+                >
+                  {icon}
+                  <span className="truncate flex-1" style={{ fontSize: '11px' }}>{item}</span>
+                </div>
+              );
+            })}
+            {filtered.length === 0 && (
+              <div className="text-[10px] opacity-40 py-1 pl-2 italic">Sin resultados</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const togglePackage = (pkgName: string) => {
+    setExpandedPackages(prev => ({
+      ...prev,
+      [pkgName]: !prev[pkgName]
+    }));
+  };
+
+  const renderPackagesFolder = (
+    specs: string[] | undefined,
+    bodies: string[] | undefined
+  ) => {
+    const isExpanded = expandedFolders.packages;
+    const uniquePkgs = Array.from(new Set([
+      ...(specs || []),
+      ...(bodies || [])
+    ])).sort();
+    
+    // Filter packages by search query
+    const filtered = uniquePkgs.filter(pkg => 
+      !objectSearch || pkg.toLowerCase().includes(objectSearch.toLowerCase())
+    );
+
+    const count = uniquePkgs.length;
+    if (objectSearch && filtered.length === 0) return null;
+
+    return (
+      <div className="space-y-0.5">
+        {/* Main Packages Folder */}
+        <div
+          onClick={() => toggleFolder('packages')}
+          className={`flex items-center gap-1.5 py-1.5 px-2 rounded-lg cursor-pointer transition-colors ${
+            isDark ? 'hover:bg-gray-800/50' : 'hover:bg-gray-200/50'
+          }`}
+        >
+          {isExpanded ? <ChevronDown className="w-3.5 h-3.5 opacity-60" /> : <ChevronRight className="w-3.5 h-3.5 opacity-60" />}
+          <span className="font-sans font-semibold text-xs flex-1 truncate">Paquetes</span>
+          <span className={`text-[10px] px-1.5 rounded-full ${isDark ? 'bg-gray-800 text-gray-400' : 'bg-gray-200 text-gray-500'}`}>
+            {count}
+          </span>
+        </div>
+
+        {isExpanded && (
+          <div className="pl-4 space-y-0.5 border-l border-gray-500/10 ml-2">
+            {filtered.map((pkg) => {
+              const isPkgExpanded = !!expandedPackages[pkg];
+              const hasSpec = specs?.includes(pkg);
+              const hasBody = bodies?.includes(pkg);
+
+              return (
+                <div key={pkg} className="space-y-0.5">
+                  {/* Package Node */}
+                  <div
+                    onClick={() => togglePackage(pkg)}
+                    className={`flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer transition-colors ${
+                      isDark ? 'hover:bg-gray-800 text-gray-300' : 'hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    {isPkgExpanded ? (
+                      <ChevronDown className="w-3 h-3 opacity-60" />
+                    ) : (
+                      <ChevronRight className="w-3 h-3 opacity-60" />
+                    )}
+                    <Package className="w-3.5 h-3.5 text-purple-400" />
+                    <span className="truncate flex-1" style={{ fontSize: '11px' }}>{pkg}</span>
+                  </div>
+
+                  {/* Subnodes: Spec & Body */}
+                  {isPkgExpanded && (
+                    <div className="pl-4 space-y-0.5 border-l border-gray-500/10 ml-1.5">
+                      {hasSpec && (
+                        <div
+                          onDoubleClick={() => handleObjectDoubleClick(pkg, 'PACKAGE')}
+                          className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md cursor-pointer transition-colors ${
+                            isDark ? 'hover:bg-gray-800 text-gray-400 hover:text-gray-200' : 'hover:bg-gray-200 text-gray-600 hover:text-gray-800'
+                          }`}
+                          title="Doble clic para cargar Especificación en el editor"
+                        >
+                          <Code className="w-3 h-3 text-purple-300" />
+                          <span style={{ fontSize: '10px' }}>Especificación</span>
+                        </div>
+                      )}
+                      {hasBody && (
+                        <div
+                          onDoubleClick={() => handleObjectDoubleClick(pkg, 'PACKAGE BODY')}
+                          className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md cursor-pointer transition-colors ${
+                            isDark ? 'hover:bg-gray-800 text-gray-400 hover:text-gray-200' : 'hover:bg-gray-200 text-gray-600 hover:text-gray-800'
+                          }`}
+                          title="Doble clic para cargar Cuerpo en el editor"
+                        >
+                          <Code className="w-3 h-3 text-purple-500" />
+                          <span style={{ fontSize: '10px' }}>Cuerpo (Body)</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {filtered.length === 0 && (
+              <div className="text-[10px] opacity-40 py-1 pl-2 italic">Sin resultados</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const [editingConn, setEditingConn] = useState<Connection | null>(null);
   const [sqlModal, setSqlModal] = useState<{
@@ -278,7 +539,7 @@ export default function Sidebar() {
 
       {/* Tabs */}
       <div className="flex border-b border-inherit">
-        {(['connections', 'history', 'favorites'] as const).map(t => (
+        {(['connections', 'schema', 'history', 'favorites'] as const).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -289,6 +550,7 @@ export default function Sidebar() {
             }`}
           >
             {t === 'connections' && <><Database className="w-3.5 h-3.5" /> Conns</>}
+            {t === 'schema' && <><Settings2 className="w-3.5 h-3.5" /> Objetos</>}
             {t === 'history' && <><History className="w-3.5 h-3.5" /> Historial</>}
             {t === 'favorites' && (
               <>
@@ -341,6 +603,81 @@ export default function Sidebar() {
               </div>
             ))}
             {connections.length === 0 && <div className="text-center text-sm opacity-50 mt-10">No connections yet.</div>}
+          </div>
+        )}
+
+        {/* ── SCHEMA / OBJECTS ── */}
+        {tab === 'schema' && (
+          <div className="space-y-4">
+            {!activeConnection ? (
+              <div className="text-center text-sm opacity-50 mt-10">
+                Selecciona una conexión activa para ver los objetos.
+              </div>
+            ) : (
+              <>
+                {/* Refresh and Search Bar */}
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm ${
+                    isDark ? 'bg-gray-800/40 border-gray-700' : 'bg-white border-gray-300'
+                  }`}>
+                    <Search className="w-4 h-4 opacity-50" />
+                    <input
+                      type="text"
+                      placeholder="Buscar..."
+                      value={objectSearch}
+                      onChange={(e) => setObjectSearch(e.target.value)}
+                      className="bg-transparent border-none outline-none w-full text-xs"
+                    />
+                    {objectSearch && (
+                      <button onClick={() => setObjectSearch('')}>
+                        <X className="w-3.5 h-3.5 opacity-50 hover:opacity-100" />
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    onClick={fetchObjects}
+                    disabled={isLoadingObjects}
+                    className={`p-2 rounded-lg border transition-colors ${
+                      isDark ? 'border-gray-700 hover:bg-gray-800' : 'border-gray-300 hover:bg-gray-100'
+                    }`}
+                    title="Actualizar Objetos"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isLoadingObjects ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+
+                {isLoadingObjects ? (
+                  <div className="flex flex-col items-center justify-center py-10 gap-2 opacity-60">
+                    <span className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs">Cargando objetos...</span>
+                  </div>
+                ) : isLoadingSource ? (
+                  <div className="flex flex-col items-center justify-center py-10 gap-2 opacity-60">
+                    <span className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs">Cargando definición...</span>
+                  </div>
+                ) : !objects ? (
+                  <div className="text-center text-xs opacity-50 py-10">
+                    No se han cargado objetos. Haz clic en actualizar.
+                  </div>
+                ) : (
+                  <div className="space-y-1 font-mono text-xs select-none">
+                    {/* Tables Folder */}
+                    {renderFolder("Tablas", "tables", objects.TABLE, <Table className="w-3.5 h-3.5 text-blue-400" />, "TABLE")}
+                    {/* Views Folder */}
+                    {renderFolder("Vistas", "views", objects.VIEW, <Eye className="w-3.5 h-3.5 text-green-400" />, "VIEW")}
+                    {/* Procedures Folder */}
+                    {renderFolder("Procedimientos", "procedures", objects.PROCEDURE, <Play className="w-3.5 h-3.5 text-orange-400" />, "PROCEDURE")}
+                    {/* Functions Folder */}
+                    {renderFolder("Funciones", "functions", objects.FUNCTION, <Code className="w-3.5 h-3.5 text-pink-400" />, "FUNCTION")}
+                    {/* Packages Folder */}
+                    {renderPackagesFolder(objects.PACKAGE, objects['PACKAGE BODY'])}
+                    {/* Triggers Folder */}
+                    {renderFolder("Triggers", "triggers", objects.TRIGGER, <Zap className="w-3.5 h-3.5 text-yellow-400" />, "TRIGGER")}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
