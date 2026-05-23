@@ -40,6 +40,16 @@ interface NodeState {
   indexesHeight?: number;
 }
 
+interface NoteState {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  text: string;
+  color?: string;
+}
+
 interface DiagramEditorProps {
   isOpen: boolean;
   onClose: () => void;
@@ -81,6 +91,9 @@ export default function DiagramEditor({
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
   const [tableSearch, setTableSearch] = useState('');
   const [hoveredRelation, setHoveredRelation] = useState<string | null>(null);
+  
+  const [diagramTitle, setDiagramTitle] = useState<string>('Modelo Relacional Activo');
+  const [notes, setNotes] = useState<NoteState[]>([]);
   
   // Navigation states (Zoom & Pan)
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -223,14 +236,29 @@ export default function DiagramEditor({
   const handleNodeHeaderMouseDown = (e: React.MouseEvent, tableName: string) => {
     e.stopPropagation();
     e.preventDefault();
-    if (resizingNodeId) return;
+    if (resizingNodeId || resizingIndexNodeId) return;
 
     setDraggingNodeId(tableName);
-    const node = nodes[tableName];
-    // Mouse coords in screen space
+    let x = 0;
+    let y = 0;
+    if (tableName.startsWith('note-')) {
+      const noteId = tableName.replace('note-', '');
+      const note = notes.find(n => n.id === noteId);
+      if (note) {
+        x = note.x;
+        y = note.y;
+      }
+    } else {
+      const node = nodes[tableName];
+      if (node) {
+        x = node.x;
+        y = node.y;
+      }
+    }
+    
     setDragOffset({
-      x: e.clientX - node.x * zoom,
-      y: e.clientY - node.y * zoom
+      x: e.clientX - x * zoom,
+      y: e.clientY - y * zoom
     });
   };
 
@@ -239,11 +267,25 @@ export default function DiagramEditor({
     e.stopPropagation();
     e.preventDefault();
     setResizingNodeId(tableName);
-    const node = nodes[tableName];
-    setInitialResizeDims({
-      width: node.width,
-      height: node.height
-    });
+    
+    let width = 200;
+    let height = 150;
+    if (tableName.startsWith('note-')) {
+      const noteId = tableName.replace('note-', '');
+      const note = notes.find(n => n.id === noteId);
+      if (note) {
+        width = note.width;
+        height = note.height;
+      }
+    } else {
+      const node = nodes[tableName];
+      if (node) {
+        width = node.width;
+        height = node.height;
+      }
+    }
+    
+    setInitialResizeDims({ width, height });
     setResizeStartPos({
       x: e.clientX,
       y: e.clientY
@@ -281,25 +323,39 @@ export default function DiagramEditor({
       // Divide by zoom so the node movement follows the mouse speed under scale
       const x = (e.clientX - dragOffset.x) / zoom;
       const y = (e.clientY - dragOffset.y) / zoom;
-      setNodes(prev => ({
-        ...prev,
-        [draggingNodeId]: {
-          ...prev[draggingNodeId],
-          x,
-          y
-        }
-      }));
+      if (draggingNodeId.startsWith('note-')) {
+        const noteId = draggingNodeId.replace('note-', '');
+        setNotes(prev => prev.map(n => n.id === noteId ? { ...n, x, y } : n));
+      } else {
+        setNodes(prev => ({
+          ...prev,
+          [draggingNodeId]: {
+            ...prev[draggingNodeId],
+            x,
+            y
+          }
+        }));
+      }
     } else if (resizingNodeId) {
       const dx = (e.clientX - resizeStartPos.x) / zoom;
       const dy = (e.clientY - resizeStartPos.y) / zoom;
-      setNodes(prev => ({
-        ...prev,
-        [resizingNodeId]: {
-          ...prev[resizingNodeId],
-          width: Math.max(160, initialResizeDims.width + dx),
-          height: Math.max(120, initialResizeDims.height + dy)
-        }
-      }));
+      if (resizingNodeId.startsWith('note-')) {
+        const noteId = resizingNodeId.replace('note-', '');
+        setNotes(prev => prev.map(n => n.id === noteId ? {
+          ...n,
+          width: Math.max(120, initialResizeDims.width + dx),
+          height: Math.max(80, initialResizeDims.height + dy)
+        } : n));
+      } else {
+        setNodes(prev => ({
+          ...prev,
+          [resizingNodeId]: {
+            ...prev[resizingNodeId],
+            width: Math.max(160, initialResizeDims.width + dx),
+            height: Math.max(120, initialResizeDims.height + dy)
+          }
+        }));
+      }
     } else if (resizingIndexNodeId) {
       const dy = (e.clientY - resizeIndexStartPos.y) / zoom;
       const node = nodes[resizingIndexNodeId];
@@ -360,8 +416,10 @@ export default function DiagramEditor({
   // Save layout to JSON
   const handleSaveJson = () => {
     const model = {
+      title: diagramTitle,
       tables: selectedTables,
       nodes,
+      notes,
       pan,
       zoom
     };
@@ -391,6 +449,9 @@ export default function DiagramEditor({
         }
         setSelectedTables(model.tables);
         setNodes(model.nodes);
+        if (model.title) setDiagramTitle(model.title);
+        if (model.notes) setNotes(model.notes);
+        else setNotes([]);
         if (model.pan) setPan(model.pan);
         if (model.zoom) setZoom(model.zoom);
         showToast('Modelo relacional cargado correctamente', 'success');
@@ -410,6 +471,33 @@ export default function DiagramEditor({
         color
       }
     }));
+  };
+
+  const handleUpdateNoteColor = (id: string, color: string) => {
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, color } : n));
+  };
+
+  const handleDeleteNote = (id: string) => {
+    setNotes(prev => prev.filter(n => n.id !== id));
+    showToast('Nota eliminada', 'info');
+  };
+
+  const handleUpdateNoteText = (id: string, text: string) => {
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, text } : n));
+  };
+
+  const handleAddNote = () => {
+    const newNote: NoteState = {
+      id: crypto.randomUUID(),
+      x: 250 - pan.x / zoom,
+      y: 150 - pan.y / zoom,
+      width: 200,
+      height: 150,
+      text: 'Escribe tu nota aquí...',
+      color: '#fef08a'
+    };
+    setNotes(prev => [...prev, newNote]);
+    showToast('Nota agregada al lienzo', 'info');
   };
 
   // Filtered available tables list
@@ -650,6 +738,18 @@ export default function DiagramEditor({
           >
             <Upload className="w-3.5 h-3.5" /> Cargar JSON
           </button>
+          
+          <button 
+            onClick={handleAddNote}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-semibold px-3 ${
+              isDark 
+                ? 'bg-amber-600/10 text-amber-400 hover:bg-amber-600/20 shadow-inner' 
+                : 'bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-200/50'
+            }`}
+            title="Agregar una nota adhesiva al lienzo"
+          >
+            <Plus className="w-3.5 h-3.5" /> Agregar Nota
+          </button>
 
           <div className={`w-px h-6 mx-2 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`} />
 
@@ -756,6 +856,23 @@ export default function DiagramEditor({
             isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'
           }`}>
             Arrastra el fondo para paneo · Rueda para zoom · Arrastra cabecera de tabla para mover
+          </div>
+
+          {/* Diagram Title Box (top left of canvas, fixed) */}
+          <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
+            <input 
+              type="text"
+              value={diagramTitle}
+              onChange={(e) => setDiagramTitle(e.target.value)}
+              placeholder="Título del Diagrama..."
+              className={`px-3 py-1.5 rounded-xl border font-bold text-sm tracking-tight outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
+                isDark 
+                  ? 'bg-gray-900/90 border-gray-800 text-gray-100 shadow-xl shadow-black/20' 
+                  : 'bg-white/95 border-gray-200 text-gray-800 shadow-lg shadow-gray-250/50'
+              }`}
+              style={{ width: '260px' }}
+              title="Haz doble clic o escribe para cambiar el título del diagrama"
+            />
           </div>
 
           {/* Scale Container */}
@@ -968,6 +1085,88 @@ export default function DiagramEditor({
                   >
                     {/* Visual indicators */}
                     <svg width="6" height="6" viewBox="0 0 6 6" className="opacity-30 group-hover/node:opacity-100">
+                      <line x1="6" y1="0" x2="0" y2="6" stroke="currentColor" strokeWidth="1.5" />
+                      <line x1="6" y1="3" x2="3" y2="6" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Notes Nodes */}
+            {notes.map(note => {
+              const darkenColor = (hex: string) => {
+                if (hex === '#fef08a') return '#fde047'; // yellow
+                if (hex === '#bbf7d0') return '#86efac'; // green
+                if (hex === '#bfdbfe') return '#93c5fd'; // blue
+                if (hex === '#fbcfe8') return '#f9a8d4'; // pink
+                if (hex === '#e9d5ff') return '#d8b4fe'; // purple
+                return hex;
+              };
+
+              return (
+                <div
+                  key={note.id}
+                  style={{
+                    position: 'absolute',
+                    left: `${note.x}px`,
+                    top: `${note.y}px`,
+                    width: `${note.width}px`,
+                    height: `${note.height}px`,
+                    backgroundColor: note.color || '#fef08a',
+                    pointerEvents: 'auto',
+                  }}
+                  className="rounded-xl shadow-lg border border-black/10 flex flex-col overflow-hidden group/note text-gray-800"
+                >
+                  {/* Note Header */}
+                  <div
+                    onMouseDown={(e) => handleNodeHeaderMouseDown(e, `note-${note.id}`)}
+                    style={{ backgroundColor: darkenColor(note.color || '#fef08a') }}
+                    className="h-8 px-2 flex items-center justify-between cursor-move shrink-0 border-b border-black/5"
+                  >
+                    {/* Small drag handle indicator */}
+                    <div className="flex items-center gap-1">
+                      <div className="w-1.5 h-1.5 rounded-full bg-gray-800/30" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-gray-800/30" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-gray-800/30" />
+                    </div>
+
+                    {/* Color presets & Delete */}
+                    <div className="flex items-center gap-1 opacity-45 group-hover/note:opacity-100 transition-opacity">
+                      {['#fef08a', '#bbf7d0', '#bfdbfe', '#fbcfe8', '#e9d5ff'].map(c => (
+                        <button
+                          key={c}
+                          onClick={() => handleUpdateNoteColor(note.id, c)}
+                          style={{ backgroundColor: c }}
+                          className={`w-2.5 h-2.5 rounded-full border border-black/10 transition-transform hover:scale-125 ${
+                            note.color === c ? 'ring-1 ring-black/40 scale-110' : ''
+                          }`}
+                        />
+                      ))}
+                      <button
+                        onClick={() => handleDeleteNote(note.id)}
+                        className="p-0.5 hover:bg-black/10 rounded ml-1 text-red-700"
+                        title="Eliminar Nota"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Textarea */}
+                  <textarea
+                    value={note.text}
+                    onChange={(e) => handleUpdateNoteText(note.id, e.target.value)}
+                    className="w-full flex-1 bg-transparent border-0 outline-none resize-none p-2 text-xs font-sans text-gray-800 focus:ring-0 placeholder-gray-600 border-none"
+                    placeholder="Escribe tu nota aquí..."
+                  />
+
+                  {/* Resize handle (bottom right corner) */}
+                  <div
+                    onMouseDown={(e) => handleResizeHandleMouseDown(e, `note-${note.id}`)}
+                    className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize flex items-center justify-center"
+                  >
+                    <svg width="6" height="6" viewBox="0 0 6 6" className="opacity-30 group-hover/note:opacity-100 text-gray-800">
                       <line x1="6" y1="0" x2="0" y2="6" stroke="currentColor" strokeWidth="1.5" />
                       <line x1="6" y1="3" x2="3" y2="6" stroke="currentColor" strokeWidth="1.5" />
                     </svg>
