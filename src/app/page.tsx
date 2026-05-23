@@ -17,10 +17,11 @@ import {
   Play, PlayCircle, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle,
   Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus,
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
-  Undo, Redo, Hammer, Save, FolderOpen, Network, Activity
+  Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare
 } from 'lucide-react';
 import { ExecResult } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
+import CompareObjectsModal from '@/components/CompareObjectsModal';
 
 // ── Toolbar Icon Button ──────────────────────────────────────────────────────
 function TbBtn({
@@ -147,6 +148,7 @@ export default function Home() {
   const [formatModalOpen, setFormatModalOpen] = useState(false);
   const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
   const [isDiagramOpen, setIsDiagramOpen] = useState(false);
+  const [isCompareOpen, setIsCompareOpen] = useState(false);
   // Save modal: 'overwrite' = confirm overwrite existing fav | 'new' = create new fav
   const [saveModal, setSaveModal] = useState<'overwrite' | 'new' | null>(null);
 
@@ -1119,6 +1121,13 @@ export default function Home() {
             onClick={() => setIsDiagramOpen(true)}
             variant="primary"
           />
+          <TbBtn
+            isDark={isDark}
+            icon={<GitCompare className={iconSize} />}
+            label="Comparar Objetos"
+            onClick={() => setIsCompareOpen(true)}
+            variant="primary"
+          />
           
           {/* DBMS Output toggle (compact) */}
           <div className="ml-auto flex items-center">
@@ -1519,6 +1528,14 @@ export default function Home() {
         isOpen={isDiagramOpen}
         onClose={() => setIsDiagramOpen(false)}
         isDark={isDark}
+        activeConnection={activeConnection}
+        showToast={showToast}
+      />
+      <CompareObjectsModal
+        isOpen={isCompareOpen}
+        onClose={() => setIsCompareOpen(false)}
+        isDark={isDark}
+        connections={connections}
         activeConnection={activeConnection}
         showToast={showToast}
       />

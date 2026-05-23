@@ -4,7 +4,7 @@ import { executeOracleQuery } from '@/lib/db';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { connection } = body;
+    const { connection, schema } = body;
 
     if (!connection) {
       return NextResponse.json(
@@ -13,14 +13,26 @@ export async function POST(req: Request) {
       );
     }
 
-    const sql = `
-      SELECT object_name, object_type, status 
-      FROM user_objects 
-      WHERE object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER')
-      ORDER BY object_type, object_name
-    `;
+    const sql = schema
+      ? `
+        SELECT object_name, object_type, status 
+        FROM all_objects 
+        WHERE owner = :schema AND object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER', 'INDEX', 'SEQUENCE', 'SYNONYM')
+        ORDER BY object_type, object_name
+      `
+      : `
+        SELECT object_name, object_type, status 
+        FROM user_objects 
+        WHERE object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER', 'INDEX', 'SEQUENCE', 'SYNONYM')
+        ORDER BY object_type, object_name
+      `;
 
-    const result = await executeOracleQuery(connection, sql);
+    const binds: any = {};
+    if (schema) {
+      binds.schema = schema.toUpperCase();
+    }
+
+    const result = await executeOracleQuery(connection, sql, binds);
     
     // Group objects by type
     const grouped: Record<string, { name: string; status: string }[]> = {
@@ -30,7 +42,10 @@ export async function POST(req: Request) {
       FUNCTION: [],
       PACKAGE: [],
       'PACKAGE BODY': [],
-      TRIGGER: []
+      TRIGGER: [],
+      INDEX: [],
+      SEQUENCE: [],
+      SYNONYM: []
     };
 
     if (result.rows && Array.isArray(result.rows)) {
