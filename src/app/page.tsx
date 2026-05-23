@@ -17,7 +17,7 @@ import {
   Play, PlayCircle, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle,
   Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus,
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
-  Undo, Redo, Hammer, Save, FolderOpen, Network
+  Undo, Redo, Hammer, Save, FolderOpen, Network, Activity
 } from 'lucide-react';
 import { ExecResult } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
@@ -142,7 +142,8 @@ export default function Home() {
   const [paramsModalOpen, setParamsModalOpen] = useState(false);
   const [detectedParams, setDetectedParams] = useState<string[]>([]);
   const [enableDbmsOutput, setEnableDbmsOutput] = useState(false);
-  const [bottomTab, setBottomTab] = useState<'results' | 'dbms' | 'errors'>('results');
+  const [bottomTab, setBottomTab] = useState<'results' | 'dbms' | 'errors' | 'explain'>('results');
+  const [explainPlan, setExplainPlan] = useState<string | null>(null);
   const [formatModalOpen, setFormatModalOpen] = useState(false);
   const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
   const [isDiagramOpen, setIsDiagramOpen] = useState(false);
@@ -358,6 +359,16 @@ export default function Home() {
     // F5 → Execute entire script
     editor.addCommand(monaco.KeyCode.F5, () => {
       executeScriptRef.current();
+    });
+
+    // Ctrl+F → Find
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
+      editor.trigger('keyboard', 'actions.find', null);
+    });
+
+    // Ctrl+R → Replace
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, () => {
+      editor.trigger('keyboard', 'editor.action.startFindReplaceAction', null);
     });
   };
 
@@ -715,6 +726,63 @@ export default function Home() {
     }
   };
 
+  const handleExplainPlan = async () => {
+    if (!activeConnection) {
+      setError("Selecciona una conexión activa desde el panel lateral.");
+      setBottomTab('results');
+      return;
+    }
+
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const selection = editor.getSelection();
+    const selectedText = editor.getModel().getValueInRange(selection);
+    
+    let queryToRun: string;
+    if (selectedText && selectedText.trim()) {
+      queryToRun = selectedText.trim();
+    } else {
+      const cursorLine = editor.getPosition()?.lineNumber || 1;
+      const fullText = editor.getModel().getValue();
+      queryToRun = getStatementAtCursor(fullText, cursorLine);
+    }
+
+    if (!queryToRun.trim()) return;
+
+    const controller = startExecution('statement', queryToRun);
+
+    try {
+      const res = await fetch('/api/oracle/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: queryToRun,
+          binds: {}
+        }),
+        signal: controller.signal
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Explain plan failed');
+      }
+
+      setExplainPlan(data.plan);
+      setBottomTab('explain');
+      useAppStore.getState().showToast('Plan de ejecución generado', 'success');
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      setExplainPlan(null);
+      setError(err.message);
+      setBottomTab('results');
+      useAppStore.getState().showToast(`Error al explicar: ${err.message}`, 'error');
+    } finally {
+      endExecution();
+    }
+  };
+
   // Sync ref values on render (when authenticated)
   executeStatementRef.current = handleExecuteStatement;
   executeScriptRef.current = handleExecuteScript;
@@ -1011,6 +1079,14 @@ export default function Home() {
             disabled={isExecuting || !activeConnection}
             variant="primary"
           />
+          <TbBtn
+            isDark={isDark}
+            icon={isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <Activity className={iconSize} />}
+            label="Explain Plan"
+            onClick={handleExplainPlan}
+            disabled={isExecuting || !activeConnection}
+            variant="primary"
+          />
 
           <TbSep isDark={isDark} />
 
@@ -1141,6 +1217,15 @@ export default function Home() {
                 )}
               </div>
             </button>
+            <button 
+              onClick={() => setBottomTab('explain')}
+              className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${bottomTab === 'explain' ? 'border-blue-500 text-blue-500' : 'border-transparent opacity-60 hover:opacity-100'}`}
+            >
+              <div className="flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-blue-500" /> 
+                Explain Plan
+              </div>
+            </button>
 
             {result && (
               <div className="flex items-center gap-4 text-xs ml-auto pr-2">
@@ -1248,6 +1333,34 @@ export default function Home() {
                     </div>
                   ) : (
                     <div className="opacity-30 italic text-center mt-10">No hay errores de compilación.</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {bottomTab === 'explain' && (
+              <div className="h-full flex flex-col overflow-hidden">
+                <div className={`p-2 border-b flex justify-between items-center ${isDark ? 'border-gray-800 bg-gray-900/50' : 'border-gray-200 bg-gray-50'}`}>
+                  <span className="text-sm opacity-70">Plan de Ejecución (EXPLAIN PLAN)</span>
+                  {explainPlan && (
+                    <button 
+                      onClick={() => setExplainPlan(null)}
+                      className="p-1.5 rounded hover:bg-red-500/10 text-red-500 flex items-center gap-1 text-xs font-medium"
+                      title="Limpiar Plan"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Limpiar Plan
+                    </button>
+                  )}
+                </div>
+                <div className="flex-1 p-4 overflow-auto custom-scrollbar font-mono text-xs whitespace-pre select-text">
+                  {explainPlan ? (
+                    <div className={`p-3 rounded-lg border leading-relaxed ${
+                      isDark ? 'bg-gray-950/40 border-gray-800 text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-700'
+                    }`}>
+                      {explainPlan}
+                    </div>
+                  ) : (
+                    <div className="opacity-30 italic text-center mt-10">No hay un plan de ejecución cargado. Haz clic en &apos;Explain Plan&apos; en la barra de herramientas.</div>
                   )}
                 </div>
               </div>

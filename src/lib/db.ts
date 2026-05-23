@@ -160,3 +160,28 @@ export async function executeOracleQuery(connectionParams: any, sql: string, bin
     throw new Error(err.message || 'Error executing Oracle query');
   }
 }
+
+export async function explainOracleQuery(connectionParams: any, sql: string, binds: any = {}) {
+  let connection: oracledb.Connection;
+  try {
+    connection = await getOrCreateSession(connectionParams);
+
+    const cleanSql = sql.trim().replace(/;+$/, '');
+    await connection.execute(`EXPLAIN PLAN FOR ${cleanSql}`, binds);
+
+    const planResult = await connection.execute(`SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())`);
+    const rows = planResult.rows || [];
+    const planLines = rows.map((row: any) => {
+      if (typeof row === 'string') return row;
+      if (Array.isArray(row)) return row[0] || '';
+      return row.PLAN_TABLE_OUTPUT || Object.values(row)[0] || '';
+    });
+
+    return {
+      plan: planLines.join('\n')
+    };
+  } catch (err: any) {
+    throw new Error(err.message || 'Error executing EXPLAIN PLAN');
+  }
+}
+
