@@ -46,6 +46,14 @@ interface TriggerMetadata {
   triggerDdl: string;
 }
 
+interface ConstraintMetadata {
+  tableName: string;
+  constraintName: string;
+  constraintType: string;
+  columnName: string;
+  searchCondition: string | null;
+}
+
 interface NodeState {
   x: number;
   y: number;
@@ -110,7 +118,8 @@ export default function DiagramEditor({
     indexes: IndexMetadata[];
     primaryKeys: PrimaryKeyMetadata[];
     triggers: TriggerMetadata[];
-  }>({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [] });
+    constraints: ConstraintMetadata[];
+  }>({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] });
 
   // Selection states
   const [activeSelectedNodes, setActiveSelectedNodes] = useState<string[]>([]);
@@ -191,7 +200,7 @@ export default function DiagramEditor({
   // Fetch columns and relations when selected tables change
   useEffect(() => {
     if (selectedTables.length === 0) {
-      setTableData({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [] });
+      setTableData({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] });
       return;
     }
 
@@ -218,7 +227,8 @@ export default function DiagramEditor({
           relations: data.relations || [],
           indexes: data.indexes || [],
           primaryKeys: data.primaryKeys || [],
-          triggers: data.triggers || []
+          triggers: data.triggers || [],
+          constraints: data.constraints || []
         });
 
         // Automatically fetch comments for any table that doesn't have them
@@ -525,6 +535,31 @@ export default function DiagramEditor({
     ddl += `-- Tablas seleccionadas: ${selectedTablesSubset.join(', ')}\n`;
     ddl += `-- =============================================================================\n\n`;
 
+    // 0. CREATE SEQUENCE statements (Detect sequences in trigger DDLs)
+    const allSequencesFound = new Set<string>();
+    selectedTablesSubset.forEach(t => {
+      const tableTriggers = (tableData.triggers || []).filter(tr => tr.tableName === t);
+      tableTriggers.forEach(tr => {
+        if (tr.triggerDdl) {
+          const seqRegex = /(\w+)\.nextval/gi;
+          let match;
+          while ((match = seqRegex.exec(tr.triggerDdl)) !== null) {
+            allSequencesFound.add(match[1].toUpperCase());
+          }
+        }
+      });
+    });
+
+    if (allSequencesFound.size > 0) {
+      ddl += `-- =============================================================================\n`;
+      ddl += `-- SECUENCIAS (Detectadas en disparadores de inserción)\n`;
+      ddl += `-- =============================================================================\n\n`;
+      allSequencesFound.forEach(seq => {
+        ddl += `CREATE SEQUENCE ${seq} START WITH 1 INCREMENT BY 1;\n`;
+      });
+      ddl += `\n`;
+    }
+
     // 1. CREATE TABLE statements
     selectedTablesSubset.forEach(t => {
       const cols = tableData.columns.filter(c => c.tableName === t);
@@ -566,12 +601,10 @@ export default function DiagramEditor({
       }
     });
 
-    // 2. ALTER TABLE for Foreign Keys
+    // 2. ALTER TABLE for Foreign Keys (Even if the referenced table is not in the graph)
     let hasRelations = false;
     selectedTablesSubset.forEach(t => {
-      const rels = tableData.relations.filter(rel => 
-        rel.fromTable === t && selectedTablesSubset.includes(rel.toTable)
-      );
+      const rels = tableData.relations.filter(rel => rel.fromTable === t);
       
       if (rels.length > 0) {
         if (!hasRelations) {
@@ -590,7 +623,98 @@ export default function DiagramEditor({
       }
     });
 
-    // 3. TRIGGERS
+    // 3. ALTER TABLE for Unique and Check Constraints (excluding NOT NULL system constraints)
+    let hasConstraintsHeader = false;
+    selectedTablesSubset.forEach(t => {
+      const tableConstraints = (tableData.constraints || []).filter(c => c.tableName === t);
+      if (tableConstraints.length > 0) {
+        const constraintGroups: Record<string, { constraintName: string; constraintType: string; columns: string[]; searchCondition: string | null }> = {};
+        tableConstraints.forEach(c => {
+          if (!constraintGroups[c.constraintName]) {
+            constraintGroups[c.constraintName] = {
+              constraintName: c.constraintName,
+              constraintType: c.constraintType,
+              columns: [],
+              searchCondition: c.searchCondition
+            };
+          }
+          if (c.columnName) {
+            constraintGroups[c.constraintName].columns.push(c.columnName);
+          }
+        });
+
+        let tableConstraintDdl = '';
+        Object.values(constraintGroups).forEach(cg => {
+          if (cg.constraintType === 'U') {
+            const colsStr = cg.columns.join(', ');
+            tableConstraintDdl += `ALTER TABLE ${t} ADD CONSTRAINT ${cg.constraintName} UNIQUE (${colsStr});\n`;
+          } else if (cg.constraintType === 'C') {
+            const isNotNull = cg.searchCondition && /is\s+not\s+null/i.test(cg.searchCondition);
+            if (!isNotNull && cg.searchCondition) {
+              tableConstraintDdl += `ALTER TABLE ${t} ADD CONSTRAINT ${cg.constraintName} CHECK (${cg.searchCondition});\n`;
+            }
+          }
+        });
+
+        if (tableConstraintDdl) {
+          if (!hasConstraintsHeader) {
+            ddl += `-- =============================================================================\n`;
+            ddl += `-- RESTRICCIONES (Constraints)\n`;
+            ddl += `-- =============================================================================\n\n`;
+            hasConstraintsHeader = true;
+          }
+          ddl += tableConstraintDdl + '\n';
+        }
+      }
+    });
+
+    // 4. CREATE INDEX statements (excluding PK/Unique auto-generated indexes)
+    let hasIndexesHeader = false;
+    selectedTablesSubset.forEach(t => {
+      const tableIndexes = (tableData.indexes || []).filter(idx => idx.tableName === t);
+      if (tableIndexes.length > 0) {
+        const indexGroups: Record<string, { indexName: string; uniqueness: string; columns: { columnName: string; descend: string }[] }> = {};
+        tableIndexes.forEach(idx => {
+          if (!indexGroups[idx.indexName]) {
+            indexGroups[idx.indexName] = {
+              indexName: idx.indexName,
+              uniqueness: idx.uniqueness,
+              columns: []
+            };
+          }
+          indexGroups[idx.indexName].columns.push({
+            columnName: idx.columnName,
+            descend: idx.descend || 'ASC'
+          });
+        });
+
+        let tableIndexDdl = '';
+        Object.values(indexGroups).forEach(idx => {
+          const isPkIndex = tableData.primaryKeys?.some(pk => pk.tableName === t && pk.constraintName === idx.indexName);
+          const isUniqueConstraintIndex = tableData.constraints?.some(c => c.tableName === t && c.constraintName === idx.indexName && c.constraintType === 'U');
+          
+          if (isPkIndex || isUniqueConstraintIndex) {
+            return;
+          }
+
+          const uniqueStr = idx.uniqueness === 'UNIQUE' ? 'UNIQUE ' : '';
+          const colsStr = idx.columns.map(c => `${c.columnName} ${c.descend === 'DESC' ? 'DESC' : 'ASC'}`).join(', ');
+          tableIndexDdl += `CREATE ${uniqueStr}INDEX ${idx.indexName} ON ${t} (${colsStr});\n`;
+        });
+
+        if (tableIndexDdl) {
+          if (!hasIndexesHeader) {
+            ddl += `-- =============================================================================\n`;
+            ddl += `-- ÍNDICES DE LAS TABLAS\n`;
+            ddl += `-- =============================================================================\n\n`;
+            hasIndexesHeader = true;
+          }
+          ddl += tableIndexDdl + '\n';
+        }
+      }
+    });
+
+    // 5. TRIGGERS
     let hasTriggers = false;
     selectedTablesSubset.forEach(t => {
       const tableTriggers = (tableData.triggers || []).filter(tr => tr.tableName === t);
@@ -635,7 +759,7 @@ export default function DiagramEditor({
         setSelectedTables([]);
         setNodes({});
         setNotes([]);
-        setTableData({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [] });
+        setTableData({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] });
         setCommentsData({});
         setShowComments({});
         fetchedCommentsRef.current.clear();
@@ -678,7 +802,16 @@ export default function DiagramEditor({
       zoom,
       commentsData,
       showComments,
-      tableData
+      tableData,
+      savedConnection: selectedConnection 
+        ? {
+            name: selectedConnection.name,
+            user: selectedConnection.user,
+            host: selectedConnection.host,
+            port: selectedConnection.port,
+            serviceName: selectedConnection.serviceName
+          }
+        : 'Fuera de Línea'
     };
     const blob = new Blob([JSON.stringify(model, null, 2)], { type: 'application/json;charset=utf-8' });
     saveAs(blob, `modelo_relacional_${selectedConnection?.name || 'db'}.json`);
@@ -712,8 +845,33 @@ export default function DiagramEditor({
         setSelectedTables(model.tables);
         setNodes(model.nodes);
         if (model.title) setDiagramTitle(model.title);
-        if (model.notes) setNotes(model.notes);
-        else setNotes([]);
+
+        let updatedNotes = model.notes ? [...model.notes] : [];
+        if (model.savedConnection) {
+          let connInfo = '';
+          if (typeof model.savedConnection === 'object' && model.savedConnection !== null) {
+            const conn = model.savedConnection;
+            connInfo = `🔌 Conexión: ${conn.name}\nUsuario: ${conn.user}\nHost: ${conn.host}\nPuerto: ${conn.port}\nServicio: ${conn.serviceName}`;
+          } else {
+            connInfo = `🌐 Conexión: ${model.savedConnection}`;
+          }
+          const noteText = `ℹ️ Información de Origen:\n${connInfo}\nFecha de carga: ${new Date().toLocaleDateString()}`;
+
+          // Remove previous origin info notes to avoid duplication
+          updatedNotes = updatedNotes.filter((n: any) => !n.text.includes('Información de Origen:'));
+
+          updatedNotes.push({
+            id: `origin-note-${Date.now()}`,
+            x: 50 - (model.pan?.x || 0) / (model.zoom || 1.0),
+            y: 50 - (model.pan?.y || 0) / (model.zoom || 1.0),
+            width: 280,
+            height: 135,
+            text: noteText,
+            color: '#bfdbfe' // blue info sticky note
+          });
+        }
+        setNotes(updatedNotes);
+
         if (model.pan) setPan(model.pan);
         if (model.zoom) setZoom(model.zoom);
 
