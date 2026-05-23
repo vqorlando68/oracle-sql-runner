@@ -22,6 +22,7 @@ import {
 import { ExecResult } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
 import CompareObjectsModal from '@/components/CompareObjectsModal';
+import DescribeObjectModal from '@/components/DescribeObjectModal';
 
 // ── Toolbar Icon Button ──────────────────────────────────────────────────────
 function TbBtn({
@@ -162,6 +163,11 @@ export default function Home() {
   const [metadataColumns, setMetadataColumns] = useState<{columnName: string, dataType: string, nullable: boolean}[]>([]);
   const [isLoadingMetadataColumns, setIsLoadingMetadataColumns] = useState(false);
 
+  // Describe Object (F4) States
+  const [isDescribeOpen, setIsDescribeOpen] = useState(false);
+  const [describeObjectName, setDescribeObjectName] = useState('');
+  const triggerDescribeObjectRef = useRef<(name: string) => void>(() => {});
+
   // Save modal: 'overwrite' = confirm overwrite existing fav | 'new' = create new fav
   const [saveModal, setSaveModal] = useState<'overwrite' | 'new' | null>(null);
 
@@ -256,6 +262,12 @@ export default function Home() {
   const activeConnection = connections.find(c => c.id === activeConnectionId);
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
   // Favorite linked to the current tab (if any)
+
+  // Update F4 trigger ref on every render to ensure fresh states
+  triggerDescribeObjectRef.current = (name: string) => {
+    setDescribeObjectName(name);
+    setIsDescribeOpen(true);
+  };
   const activeFavorite = activeTab?.favoriteId
     ? favorites.find(f => f.id === activeTab.favoriteId)
     : null;
@@ -527,6 +539,28 @@ export default function Home() {
     // Ctrl+R → Replace
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, () => {
       editor.trigger('keyboard', 'editor.action.startFindReplaceAction', null);
+    });
+
+    // F4 → Describe selected object or word under cursor
+    editor.addCommand(monaco.KeyCode.F4, () => {
+      const selection = editor.getSelection();
+      const model = editor.getModel();
+      if (model && selection) {
+        const selectedText = model.getValueInRange(selection).trim();
+        if (selectedText) {
+          triggerDescribeObjectRef.current(selectedText);
+        } else {
+          const position = editor.getPosition();
+          if (position) {
+            const word = model.getWordAtPosition(position);
+            if (word && word.word) {
+              triggerDescribeObjectRef.current(word.word);
+            } else {
+              useAppStore.getState().showToast("Selecciona el nombre de un objeto primero o coloca el cursor sobre él", "info");
+            }
+          }
+        }
+      }
     });
   };
 
@@ -1834,6 +1868,14 @@ export default function Home() {
         isDark={isDark}
         connections={connections}
         activeConnection={activeConnection}
+        showToast={showToast}
+      />
+      <DescribeObjectModal
+        isOpen={isDescribeOpen}
+        onClose={() => setIsDescribeOpen(false)}
+        isDark={isDark}
+        activeConnection={activeConnection}
+        objectName={describeObjectName}
         showToast={showToast}
       />
     </main>
