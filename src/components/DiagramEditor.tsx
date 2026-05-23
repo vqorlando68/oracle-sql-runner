@@ -7,6 +7,7 @@ import {
   MessageSquare
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
+import Editor from '@monaco-editor/react';
 
 interface ColumnMetadata {
   tableName: string;
@@ -30,6 +31,18 @@ interface IndexMetadata {
   columnName: string;
   columnPosition: number;
   descend: string;
+}
+
+interface PrimaryKeyMetadata {
+  tableName: string;
+  columnName: string;
+  constraintName: string;
+}
+
+interface TriggerMetadata {
+  tableName: string;
+  triggerName: string;
+  triggerDdl: string;
 }
 
 interface NodeState {
@@ -87,7 +100,19 @@ export default function DiagramEditor({
     columns: ColumnMetadata[];
     relations: RelationMetadata[];
     indexes: IndexMetadata[];
-  }>({ columns: [], relations: [], indexes: [] });
+    primaryKeys: PrimaryKeyMetadata[];
+    triggers: TriggerMetadata[];
+  }>({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [] });
+
+  // Selection states
+  const [activeSelectedNodes, setActiveSelectedNodes] = useState<string[]>([]);
+
+  // DDL generation states
+  const [isDdlModalOpen, setIsDdlModalOpen] = useState(false);
+  const [ddlModalTables, setDdlModalTables] = useState<string[]>([]);
+
+  // Comments fetching cache ref
+  const fetchedCommentsRef = useRef<Set<string>>(new Set());
   
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
   const [tableSearch, setTableSearch] = useState('');
@@ -158,7 +183,7 @@ export default function DiagramEditor({
   // Fetch columns and relations when selected tables change
   useEffect(() => {
     if (selectedTables.length === 0) {
-      setTableData({ columns: [], relations: [], indexes: [] });
+      setTableData({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [] });
       return;
     }
 
@@ -179,7 +204,14 @@ export default function DiagramEditor({
         setTableData({
           columns: data.columns || [],
           relations: data.relations || [],
-          indexes: data.indexes || []
+          indexes: data.indexes || [],
+          primaryKeys: data.primaryKeys || [],
+          triggers: data.triggers || []
+        });
+
+        // Automatically fetch comments for any table that doesn't have them
+        selectedTables.forEach(t => {
+          fetchCommentsForTable(t);
         });
       } catch (err: any) {
         showToast(err.message, 'error');
@@ -200,6 +232,7 @@ export default function DiagramEditor({
         delete updated[tableName];
         return updated;
       });
+      setActiveSelectedNodes(prev => prev.filter(t => t !== tableName));
     } else {
       setSelectedTables(prev => [...prev, tableName]);
       // Set default position near the center of visible view or random offset
@@ -213,6 +246,8 @@ export default function DiagramEditor({
           color: PRESET_COLORS[Math.floor(Math.random() * PRESET_COLORS.length)]
         }
       }));
+      // Fetch comments automatically
+      fetchCommentsForTable(tableName);
     }
   };
 
@@ -227,6 +262,8 @@ export default function DiagramEditor({
         height: 250,
         color: PRESET_COLORS[idx % PRESET_COLORS.length]
       };
+      // Fetch comments automatically
+      fetchCommentsForTable(tableName);
     });
     setNodes(newNodes);
     showToast('Todas las tablas añadidas al diagrama', 'info');
@@ -236,6 +273,10 @@ export default function DiagramEditor({
     setSelectedTables([]);
     setNodes({});
     setNotes([]);
+    setActiveSelectedNodes([]);
+    setCommentsData({});
+    setShowComments({});
+    fetchedCommentsRef.current.clear();
     showToast('Lienzo limpiado', 'info');
   };
 
@@ -244,6 +285,9 @@ export default function DiagramEditor({
     e.stopPropagation();
     e.preventDefault();
     if (resizingNodeId || resizingIndexNodeId) return;
+
+    // Trigger selection logic
+    handleNodeMouseDown(e, tableName);
 
     setDraggingNodeId(tableName);
     let x = 0;
@@ -302,6 +346,12 @@ export default function DiagramEditor({
   // Canvas Panning Logic
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if (draggingNodeId || resizingNodeId || resizingIndexNodeId) return;
+
+    // Clear selection if we click on the canvas directly and not holding Ctrl
+    if (!e.ctrlKey && !e.metaKey) {
+      setActiveSelectedNodes([]);
+    }
+
     setIsPanning(true);
     setPanStart({
       x: e.clientX - pan.x,
@@ -420,6 +470,170 @@ export default function DiagramEditor({
     setPan({ x: 0, y: 0 });
   };
 
+  // Node selection helper
+  const handleNodeMouseDown = (e: React.MouseEvent, tableName: string) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+
+    if (e.ctrlKey || e.metaKey) {
+      setActiveSelectedNodes(prev => {
+        if (prev.includes(tableName)) {
+          return prev.filter(t => t !== tableName);
+        } else {
+          return [...prev, tableName];
+        }
+      });
+    } else {
+      if (!activeSelectedNodes.includes(tableName)) {
+        setActiveSelectedNodes([tableName]);
+      }
+    }
+  };
+
+  // Right click context menu (DDL) helper
+  const handleNodeContextMenu = (e: React.MouseEvent, tableName: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    let targetTables = activeSelectedNodes;
+    if (!activeSelectedNodes.includes(tableName)) {
+      targetTables = [tableName];
+      setActiveSelectedNodes([tableName]);
+    }
+
+    setDdlModalTables(targetTables);
+    setIsDdlModalOpen(true);
+  };
+
+  // DDL builder
+  const generateDdl = (selectedTablesSubset: string[]) => {
+    const escapeSqlString = (str: string) => str.replace(/'/g, "''");
+
+    let ddl = `-- =============================================================================\n`;
+    ddl += `-- SCRIPT DE CONSTRUCCIÓN DDL (Generado Automáticamente)\n`;
+    ddl += `-- Tablas seleccionadas: ${selectedTablesSubset.join(', ')}\n`;
+    ddl += `-- =============================================================================\n\n`;
+
+    // 1. CREATE TABLE statements
+    selectedTablesSubset.forEach(t => {
+      const cols = tableData.columns.filter(c => c.tableName === t);
+      const pks = tableData.primaryKeys ? tableData.primaryKeys.filter(pk => pk.tableName === t) : [];
+      
+      ddl += `CREATE TABLE ${t} (\n`;
+      
+      const colLines = cols.map(c => {
+        const isNullable = c.nullable === 'Y';
+        return `  ${c.columnName.padEnd(25)} ${c.dataType.toUpperCase()} ${isNullable ? 'NULL' : 'NOT NULL'}`;
+      });
+      
+      if (pks.length > 0) {
+        const pkCols = pks.map(pk => pk.columnName).join(', ');
+        const constraintName = pks[0].constraintName || `PK_${t}`;
+        colLines.push(`  CONSTRAINT ${constraintName} PRIMARY KEY (${pkCols})`);
+      }
+      
+      ddl += colLines.join(',\n');
+      ddl += `\n);\n\n`;
+
+      // 1.1 TABLE & COLUMN COMMENTS
+      const comments = commentsData[t];
+      if (comments) {
+        let hasComments = false;
+        if (comments.tableComment) {
+          ddl += `COMMENT ON TABLE ${t} IS '${escapeSqlString(comments.tableComment)}';\n`;
+          hasComments = true;
+        }
+        Object.entries(comments.columns || {}).forEach(([colName, colComment]) => {
+          if (colComment) {
+            ddl += `COMMENT ON COLUMN ${t}.${colName} IS '${escapeSqlString(colComment)}';\n`;
+            hasComments = true;
+          }
+        });
+        if (hasComments) {
+          ddl += `\n`;
+        }
+      }
+    });
+
+    // 2. ALTER TABLE for Foreign Keys
+    let hasRelations = false;
+    selectedTablesSubset.forEach(t => {
+      const rels = tableData.relations.filter(rel => 
+        rel.fromTable === t && selectedTablesSubset.includes(rel.toTable)
+      );
+      
+      if (rels.length > 0) {
+        if (!hasRelations) {
+          ddl += `-- =============================================================================\n`;
+          ddl += `-- RELACIONES (Claves Foráneas)\n`;
+          ddl += `-- =============================================================================\n\n`;
+          hasRelations = true;
+        }
+        
+        rels.forEach(rel => {
+          ddl += `ALTER TABLE ${rel.fromTable}\n`;
+          ddl += `  ADD CONSTRAINT ${rel.constraintName}\n`;
+          ddl += `  FOREIGN KEY (${rel.fromColumn})\n`;
+          ddl += `  REFERENCES ${rel.toTable} (${rel.toColumn});\n\n`;
+        });
+      }
+    });
+
+    // 3. TRIGGERS
+    let hasTriggers = false;
+    selectedTablesSubset.forEach(t => {
+      const tableTriggers = (tableData.triggers || []).filter(tr => tr.tableName === t);
+      if (tableTriggers.length > 0) {
+        if (!hasTriggers) {
+          ddl += `-- =============================================================================\n`;
+          ddl += `-- DISPARADORES (Triggers)\n`;
+          ddl += `-- =============================================================================\n\n`;
+          hasTriggers = true;
+        }
+        tableTriggers.forEach(tr => {
+          if (tr.triggerDdl) {
+            ddl += `${tr.triggerDdl.trim()}\n/\n\n`;
+          }
+        });
+      }
+    });
+
+    return ddl;
+  };
+
+  const generatedDdl = useMemo(() => {
+    if (ddlModalTables.length === 0) return '';
+    return generateDdl(ddlModalTables);
+  }, [ddlModalTables, tableData, commentsData]);
+
+  const handleSaveDdlToFile = () => {
+    const blob = new Blob([generatedDdl], { type: 'text/plain;charset=utf-8' });
+    saveAs(blob, `script_construccion_${ddlModalTables.join('_')}.sql`);
+    showToast('Script guardado en archivo', 'success');
+  };
+
+  // Keyboard listeners for Ctrl+A Select All
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isOpen) return;
+      
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        setActiveSelectedNodes(selectedTables);
+        showToast('Todas las tablas seleccionadas en el lienzo', 'info');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, selectedTables]);
+
   // Save layout to JSON
   const handleSaveJson = () => {
     const model = {
@@ -428,7 +642,9 @@ export default function DiagramEditor({
       nodes,
       notes,
       pan,
-      zoom
+      zoom,
+      commentsData,
+      showComments
     };
     const blob = new Blob([JSON.stringify(model, null, 2)], { type: 'application/json;charset=utf-8' });
     saveAs(blob, `modelo_relacional_${activeConnection?.name || 'db'}.json`);
@@ -461,6 +677,28 @@ export default function DiagramEditor({
         else setNotes([]);
         if (model.pan) setPan(model.pan);
         if (model.zoom) setZoom(model.zoom);
+
+        fetchedCommentsRef.current.clear();
+        if (model.commentsData) {
+          setCommentsData(model.commentsData);
+          Object.keys(model.commentsData).forEach(t => fetchedCommentsRef.current.add(t));
+        } else {
+          setCommentsData({});
+        }
+
+        if (model.showComments) {
+          setShowComments(model.showComments);
+        } else {
+          setShowComments({});
+        }
+
+        // Fetch comments for tables in model if they aren't loaded
+        model.tables.forEach((t: string) => {
+          if (!model.commentsData || !model.commentsData[t]) {
+            fetchCommentsForTable(t);
+          }
+        });
+
         showToast('Modelo relacional cargado correctamente', 'success');
       } catch (err: any) {
         showToast(`Error al cargar JSON: ${err.message}`, 'error');
@@ -507,17 +745,16 @@ export default function DiagramEditor({
     showToast('Nota agregada al lienzo', 'info');
   };
 
-  const handleToggleComments = async (tableName: string) => {
-    // If comments are already loaded, just toggle visibility
-    if (commentsData[tableName]) {
+  const fetchCommentsForTable = async (tableName: string) => {
+    if (fetchedCommentsRef.current.has(tableName)) {
       setShowComments(prev => ({
         ...prev,
-        [tableName]: !prev[tableName]
+        [tableName]: true
       }));
       return;
     }
 
-    // Otherwise, fetch comments from DB
+    fetchedCommentsRef.current.add(tableName);
     setLoadingComments(prev => ({ ...prev, [tableName]: true }));
     try {
       const res = await fetch('/api/oracle/table-comments', {
@@ -549,9 +786,21 @@ export default function DiagramEditor({
         [tableName]: true
       }));
     } catch (err: any) {
+      fetchedCommentsRef.current.delete(tableName); // allow retry
       showToast(err.message, 'error');
     } finally {
       setLoadingComments(prev => ({ ...prev, [tableName]: false }));
+    }
+  };
+
+  const handleToggleComments = async (tableName: string) => {
+    if (commentsData[tableName]) {
+      setShowComments(prev => ({
+        ...prev,
+        [tableName]: !prev[tableName]
+      }));
+    } else {
+      await fetchCommentsForTable(tableName);
     }
   };
 
@@ -1002,6 +1251,11 @@ export default function DiagramEditor({
               return (
                 <div
                   key={t}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleNodeMouseDown(e, t);
+                  }}
+                  onContextMenu={(e) => handleNodeContextMenu(e, t)}
                   style={{
                     position: 'absolute',
                     left: `${node.x}px`,
@@ -1010,10 +1264,10 @@ export default function DiagramEditor({
                     height: `${node.height}px`,
                     pointerEvents: 'auto', // override parent pointerEvents
                   }}
-                  className={`rounded-xl shadow-2xl border flex flex-col overflow-hidden group/node backdrop-blur-md transition-shadow hover:shadow-blue-500/5 ${
-                    isDark 
-                      ? 'bg-gray-900/90 border-gray-800' 
-                      : 'bg-white/95 border-gray-200'
+                  className={`rounded-xl shadow-2xl border flex flex-col overflow-hidden group/node backdrop-blur-md transition-all duration-150 hover:shadow-blue-500/5 ${
+                    activeSelectedNodes.includes(t)
+                      ? 'ring-2 ring-blue-500 border-blue-500 shadow-blue-500/20'
+                      : (isDark ? 'bg-gray-900/90 border-gray-800' : 'bg-white/95 border-gray-200')
                   }`}
                 >
                   {/* Node Header (handles dragging) */}
@@ -1079,8 +1333,10 @@ export default function DiagramEditor({
                     {cols.length > 0 ? (
                       cols.map(c => {
                         const isNullable = c.nullable === 'Y';
-                        // Crude PK guess (ends with _ID or ID) to highlight visually
-                        const isPk = c.columnName.toUpperCase() === 'ID' || c.columnName.toUpperCase().endsWith('_ID');
+                        // Check if column is a real primary key
+                        const isPk = (tableData.primaryKeys || []).some(
+                          pk => pk.tableName === t && pk.columnName === c.columnName
+                        );
                         const isColHighlighted = isColumnInHoveredRelation(t, c.columnName);
                         
                         const colComment = showComments[t] ? commentsData[t]?.columns[c.columnName] : null;
@@ -1277,6 +1533,84 @@ export default function DiagramEditor({
         style={{ display: 'none' }}
         onChange={handleJsonFileChange}
       />
+
+      {/* DDL Script Viewer Modal */}
+      {isDdlModalOpen && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fade-in pointer-events-auto">
+          <div 
+            className={`w-full max-w-3xl h-[80vh] rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 ${
+              isDark ? 'bg-gray-900 border-gray-800 text-gray-200 shadow-black/80' : 'bg-white border-gray-200 text-gray-800 shadow-gray-400/30'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-blue-500" />
+                <div>
+                  <h3 className="font-bold text-base">Script de Construcción (DDL)</h3>
+                  <p className="text-xs opacity-60">Tablas incluidas: {ddlModalTables.join(', ')}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsDdlModalOpen(false)} 
+                className={`p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 transition-colors`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 min-h-0 relative border rounded-xl overflow-hidden dark:border-gray-800 border-gray-200">
+              <Editor
+                height="100%"
+                defaultLanguage="sql"
+                theme={isDark ? 'vs-dark' : 'light'}
+                value={generatedDdl}
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  fontSize: 12,
+                  fontFamily: 'JetBrains Mono, Consolas, monospace',
+                  lineHeight: 20,
+                  scrollBeyondLastLine: false,
+                  smoothScrolling: true,
+                  cursorBlinking: 'smooth',
+                }}
+              />
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={handleSaveDdlToFile}
+                className={`py-2 px-4 rounded-xl text-sm border font-semibold transition-colors flex items-center gap-1.5 ${
+                  isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-650'
+                }`}
+              >
+                <Download className="w-4 h-4" /> Guardar en Archivo
+              </button>
+              <button
+                onClick={() => setIsDdlModalOpen(false)}
+                className={`py-2 px-4 rounded-xl text-sm border transition-colors ${
+                  isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-650'
+                }`}
+              >
+                Cerrar
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(generatedDdl);
+                    showToast('Script copiado al portapapeles', 'success');
+                  } catch {
+                    showToast('No se pudo copiar el script', 'error');
+                  }
+                }}
+                className="py-2 px-5 rounded-xl text-sm bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-colors flex items-center gap-1.5 shadow-lg shadow-blue-500/10 hover:shadow-blue-500/20"
+              >
+                <Check className="w-4 h-4" /> Copiar Código
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
