@@ -1,0 +1,837 @@
+"use client";
+
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { 
+  X, Plus, Minus, Maximize2, Download, Upload, Trash2, 
+  Settings, Database, HelpCircle, Columns, RefreshCw, ZoomIn, ZoomOut, Check
+} from 'lucide-react';
+import { saveAs } from 'file-saver';
+
+interface ColumnMetadata {
+  tableName: string;
+  columnName: string;
+  dataType: string;
+  nullable: string;
+}
+
+interface RelationMetadata {
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+  constraintName: string;
+}
+
+interface NodeState {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color?: string;
+}
+
+interface DiagramEditorProps {
+  isOpen: boolean;
+  onClose: () => void;
+  isDark: boolean;
+  activeConnection: any;
+  showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
+}
+
+const PRESET_COLORS = [
+  '#3b82f6', // Blue
+  '#10b981', // Green
+  '#f59e0b', // Amber
+  '#ec4899', // Pink
+  '#8b5cf6', // Violet
+  '#ef4444', // Red
+  '#06b6d4', // Cyan
+];
+
+export default function DiagramEditor({
+  isOpen,
+  onClose,
+  isDark,
+  activeConnection,
+  showToast
+}: DiagramEditorProps) {
+  // Database tables states
+  const [availableTables, setAvailableTables] = useState<string[]>([]);
+  const [isLoadingTables, setIsLoadingTables] = useState(false);
+
+  // Canvas states
+  const [selectedTables, setSelectedTables] = useState<string[]>([]);
+  const [nodes, setNodes] = useState<Record<string, NodeState>>({});
+  const [tableData, setTableData] = useState<{
+    columns: ColumnMetadata[];
+    relations: RelationMetadata[];
+  }>({ columns: [], relations: [] });
+  
+  const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
+  const [tableSearch, setTableSearch] = useState('');
+  
+  // Navigation states (Zoom & Pan)
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1.0);
+  
+  // Drag states
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  
+  // Resize states
+  const [resizingNodeId, setResizingNodeId] = useState<string | null>(null);
+  const [initialResizeDims, setInitialResizeDims] = useState({ width: 0, height: 0 });
+  const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 });
+
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch available tables on open
+  useEffect(() => {
+    if (!isOpen || !activeConnection) {
+      setAvailableTables([]);
+      return;
+    }
+
+    const fetchAvailableTables = async () => {
+      setIsLoadingTables(true);
+      try {
+        const res = await fetch('/api/oracle/objects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connection: activeConnection })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error al obtener tablas de la base de datos');
+        
+        // Extract names of TABLE objects
+        const tables = (data.objects?.TABLE || []).map((obj: any) => obj.name || obj);
+        setAvailableTables(tables);
+      } catch (err: any) {
+        showToast(err.message, 'error');
+      } finally {
+        setIsLoadingTables(false);
+      }
+    };
+
+    fetchAvailableTables();
+  }, [isOpen, activeConnection]);
+
+  // Fetch columns and relations when selected tables change
+  useEffect(() => {
+    if (selectedTables.length === 0) {
+      setTableData({ columns: [], relations: [] });
+      return;
+    }
+
+    const fetchMetadata = async () => {
+      setIsLoadingMetadata(true);
+      try {
+        const res = await fetch('/api/oracle/table-metadata', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connection: activeConnection,
+            tables: selectedTables
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error al cargar metadatos relacionales');
+        
+        setTableData({
+          columns: data.columns || [],
+          relations: data.relations || []
+        });
+      } catch (err: any) {
+        showToast(err.message, 'error');
+      } finally {
+        setIsLoadingMetadata(false);
+      }
+    };
+
+    fetchMetadata();
+  }, [selectedTables, activeConnection]);
+
+  // Handle table selection toggle
+  const handleToggleTable = (tableName: string) => {
+    if (selectedTables.includes(tableName)) {
+      setSelectedTables(prev => prev.filter(t => t !== tableName));
+      setNodes(prev => {
+        const updated = { ...prev };
+        delete updated[tableName];
+        return updated;
+      });
+    } else {
+      setSelectedTables(prev => [...prev, tableName]);
+      // Set default position near the center of visible view or random offset
+      setNodes(prev => ({
+        ...prev,
+        [tableName]: {
+          x: 200 + Math.random() * 100 - pan.x / zoom,
+          y: 200 + Math.random() * 100 - pan.y / zoom,
+          width: 240,
+          height: 250,
+          color: PRESET_COLORS[Math.floor(Math.random() * PRESET_COLORS.length)]
+        }
+      }));
+    }
+  };
+
+  const handleSelectAll = () => {
+    setSelectedTables(availableTables);
+    const newNodes: Record<string, NodeState> = {};
+    availableTables.forEach((tableName, idx) => {
+      newNodes[tableName] = {
+        x: 100 + (idx % 4) * 280,
+        y: 100 + Math.floor(idx / 4) * 290,
+        width: 240,
+        height: 250,
+        color: PRESET_COLORS[idx % PRESET_COLORS.length]
+      };
+    });
+    setNodes(newNodes);
+    showToast('Todas las tablas añadidas al diagrama', 'info');
+  };
+
+  const handleClearAll = () => {
+    setSelectedTables([]);
+    setNodes({});
+    showToast('Lienzo limpiado', 'info');
+  };
+
+  // Dragging Node Logic
+  const handleNodeHeaderMouseDown = (e: React.MouseEvent, tableName: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (resizingNodeId) return;
+
+    setDraggingNodeId(tableName);
+    const node = nodes[tableName];
+    // Mouse coords in screen space
+    setDragOffset({
+      x: e.clientX - node.x * zoom,
+      y: e.clientY - node.y * zoom
+    });
+  };
+
+  // Resizing Node Logic
+  const handleResizeHandleMouseDown = (e: React.MouseEvent, tableName: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setResizingNodeId(tableName);
+    const node = nodes[tableName];
+    setInitialResizeDims({
+      width: node.width,
+      height: node.height
+    });
+    setResizeStartPos({
+      x: e.clientX,
+      y: e.clientY
+    });
+  };
+
+  // Canvas Panning Logic
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (draggingNodeId || resizingNodeId) return;
+    setIsPanning(true);
+    setPanStart({
+      x: e.clientX - pan.x,
+      y: e.clientY - pan.y
+    });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isPanning) {
+      setPan({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y
+      });
+    } else if (draggingNodeId) {
+      // Divide by zoom so the node movement follows the mouse speed under scale
+      const x = (e.clientX - dragOffset.x) / zoom;
+      const y = (e.clientY - dragOffset.y) / zoom;
+      setNodes(prev => ({
+        ...prev,
+        [draggingNodeId]: {
+          ...prev[draggingNodeId],
+          x,
+          y
+        }
+      }));
+    } else if (resizingNodeId) {
+      const dx = (e.clientX - resizeStartPos.x) / zoom;
+      const dy = (e.clientY - resizeStartPos.y) / zoom;
+      setNodes(prev => ({
+        ...prev,
+        [resizingNodeId]: {
+          ...prev[resizingNodeId],
+          width: Math.max(160, initialResizeDims.width + dx),
+          height: Math.max(120, initialResizeDims.height + dy)
+        }
+      }));
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsPanning(false);
+    setDraggingNodeId(null);
+    setResizingNodeId(null);
+  };
+
+  // Zooming Logic
+  const handleCanvasWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const zoomFactor = 1.1;
+    let newZoom = zoom;
+    if (e.deltaY < 0) {
+      newZoom = Math.min(3.0, zoom * zoomFactor);
+    } else {
+      newZoom = Math.max(0.2, zoom / zoomFactor);
+    }
+    
+    // Zoom relative to pointer position
+    if (canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      const prevX = (mouseX - pan.x) / zoom;
+      const prevY = (mouseY - pan.y) / zoom;
+      
+      setZoom(newZoom);
+      setPan({
+        x: mouseX - prevX * newZoom,
+        y: mouseY - prevY * newZoom
+      });
+    }
+  };
+
+  const handleZoomIn = () => setZoom(z => Math.min(3.0, z * 1.2));
+  const handleZoomOut = () => setZoom(z => Math.max(0.2, z / 1.2));
+  const handleZoomReset = () => {
+    setZoom(1.0);
+    setPan({ x: 0, y: 0 });
+  };
+
+  // Save layout to JSON
+  const handleSaveJson = () => {
+    const model = {
+      tables: selectedTables,
+      nodes,
+      pan,
+      zoom
+    };
+    const blob = new Blob([JSON.stringify(model, null, 2)], { type: 'application/json;charset=utf-8' });
+    saveAs(blob, `modelo_relacional_${activeConnection?.name || 'db'}.json`);
+    showToast('Modelo relacional guardado', 'success');
+  };
+
+  // Open layout from JSON
+  const handleOpenJsonClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleJsonFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const model = JSON.parse(event.target?.result as string);
+        if (!model.tables || !model.nodes) {
+          throw new Error('Formato JSON de modelo inválido.');
+        }
+        setSelectedTables(model.tables);
+        setNodes(model.nodes);
+        if (model.pan) setPan(model.pan);
+        if (model.zoom) setZoom(model.zoom);
+        showToast('Modelo relacional cargado correctamente', 'success');
+      } catch (err: any) {
+        showToast(`Error al cargar JSON: ${err.message}`, 'error');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Color selection for a node
+  const handleSetNodeColor = (tableName: string, color: string) => {
+    setNodes(prev => ({
+      ...prev,
+      [tableName]: {
+        ...prev[tableName],
+        color
+      }
+    }));
+  };
+
+  // Filtered available tables list
+  const filteredTables = useMemo(() => {
+    const q = tableSearch.toLowerCase();
+    return availableTables.filter(t => t.toLowerCase().includes(q));
+  }, [availableTables, tableSearch]);
+
+  // Render SVG Edges (foreign key lines)
+  const renderEdges = useMemo(() => {
+    const drawnKeys = new Set<string>();
+    
+    return tableData.relations.map((rel, index) => {
+      const fromNode = nodes[rel.fromTable];
+      const toNode = nodes[rel.toTable];
+      
+      if (!fromNode || !toNode) return null;
+      
+      // Prevent rendering exact duplicate relations repeatedly
+      const relKey = `${rel.fromTable}.${rel.fromColumn}->${rel.toTable}.${rel.toColumn}`;
+      if (drawnKeys.has(relKey)) return null;
+      drawnKeys.add(relKey);
+
+      // Node bounding box coords
+      const from = {
+        x1: fromNode.x,
+        y1: fromNode.y,
+        x2: fromNode.x + fromNode.width,
+        y2: fromNode.y + fromNode.height,
+        cx: fromNode.x + fromNode.width / 2,
+        cy: fromNode.y + fromNode.height / 2
+      };
+      
+      const to = {
+        x1: toNode.x,
+        y1: toNode.y,
+        x2: toNode.x + toNode.width,
+        y2: toNode.y + toNode.height,
+        cx: toNode.x + toNode.width / 2,
+        cy: toNode.y + toNode.height / 2
+      };
+
+      // Find the closest borders/anchors to draw the line
+      let startX = from.cx;
+      let startY = from.cy;
+      let endX = to.cx;
+      let endY = to.cy;
+
+      // Determine left/right/top/bottom anchor positions based on relative nodes placement
+      if (from.x2 < to.x1) {
+        // From node is to the left of To node
+        startX = from.x2;
+        endX = to.x1;
+      } else if (from.x1 > to.x2) {
+        // From node is to the right of To node
+        startX = from.x1;
+        endX = to.x2;
+      } else {
+        // Nodes overlap horizontally, use vertical connection
+        if (from.y2 < to.y1) {
+          startY = from.y2;
+          endY = to.y1;
+        } else if (from.y1 > to.y2) {
+          startY = from.y1;
+          endY = to.y2;
+        }
+      }
+
+      // Draw a nice smooth cubic Bezier curve
+      const dx = Math.abs(endX - startX);
+      const dy = Math.abs(endY - startY);
+      
+      let controlDist = dx * 0.5;
+      if (controlDist < 50) controlDist = 50; // minimum curvature
+
+      let cx1 = startX;
+      let cy1 = startY;
+      let cx2 = endX;
+      let cy2 = endY;
+
+      if (startX < endX) {
+        cx1 += controlDist;
+        cx2 -= controlDist;
+      } else if (startX > endX) {
+        cx1 -= controlDist;
+        cx2 += controlDist;
+      } else {
+        // vertical connection curve
+        const vDist = dy * 0.5;
+        if (startY < endY) {
+          cy1 += vDist;
+          cy2 -= vDist;
+        } else {
+          cy1 -= vDist;
+          cy2 += vDist;
+        }
+      }
+
+      const pathData = `M ${startX} ${startY} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${endX} ${endY}`;
+
+      return (
+        <g key={`${rel.constraintName}-${index}`}>
+          {/* Glowing background line for hover effect */}
+          <path
+            d={pathData}
+            fill="none"
+            stroke="rgba(59, 130, 246, 0.15)"
+            strokeWidth={8}
+            className="hover:stroke-blue-500/40 transition-colors cursor-pointer"
+          >
+            <title>{`${rel.constraintName}: ${rel.fromTable}(${rel.fromColumn}) -> ${rel.toTable}(${rel.toColumn})`}</title>
+          </path>
+          {/* Main edge path */}
+          <path
+            d={pathData}
+            fill="none"
+            stroke="#3b82f6"
+            strokeWidth={2}
+            markerEnd="url(#arrow)"
+            className="pointer-events-none"
+          />
+          {/* Label indicating constraint (small background pill) */}
+          <text
+            x={(startX + endX) / 2}
+            y={(startY + endY) / 2 - 4}
+            fill={isDark ? '#93c5fd' : '#1e3a8a'}
+            fontSize="8"
+            fontFamily="monospace"
+            textAnchor="middle"
+            className="select-none pointer-events-none font-bold"
+            style={{ textShadow: isDark ? '0 1px 2px #000' : '0 1px 2px #fff' }}
+          >
+            {rel.fromColumn} ➜ {rel.toColumn}
+          </text>
+        </g>
+      );
+    });
+  }, [tableData.relations, nodes, isDark]);
+
+  if (!isOpen) return null;
+
+  const bgStyle = isDark 
+    ? 'bg-gray-950 text-gray-200' 
+    : 'bg-gray-50 text-gray-800';
+
+  const gridBackground = isDark
+    ? 'radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px)'
+    : 'radial-gradient(circle, rgba(0,0,0,0.05) 1px, transparent 1px)';
+
+  return (
+    <div className={`fixed inset-0 z-[500] flex flex-col ${bgStyle} font-sans select-none overflow-hidden animate-fade-in`}>
+      {/* ── Top Navigation Bar ───────────────────────────────────────────── */}
+      <div className={`h-14 border-b flex items-center px-4 justify-between ${
+        isDark ? 'border-gray-800 bg-gray-900' : 'border-gray-200 bg-white'
+      }`}>
+        <div className="flex items-center gap-2.5">
+          <Database className="w-5 h-5 text-blue-500" />
+          <div>
+            <h2 className="font-bold text-sm tracking-tight">Diseñador Relacional (ERD)</h2>
+            <p className="text-[10px] opacity-60">Conexión activa: {activeConnection?.name}</p>
+          </div>
+        </div>
+
+        {/* Zoom & Canvas Actions */}
+        <div className="flex items-center gap-1">
+          <button onClick={handleZoomIn} className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'}`} title="Zoom In">
+            <ZoomIn className="w-4 h-4" />
+          </button>
+          <span className="text-xs font-mono w-12 text-center opacity-70">
+            {Math.round(zoom * 100)}%
+          </span>
+          <button onClick={handleZoomOut} className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'}`} title="Zoom Out">
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          <button onClick={handleZoomReset} className={`p-1.5 rounded-lg border text-xs font-medium px-2.5 ${
+            isDark ? 'border-gray-800 hover:bg-gray-800' : 'border-gray-200 hover:bg-gray-100'
+          }`} title="Reset Zoom">
+            1:1
+          </button>
+
+          <div className={`w-px h-6 mx-2 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`} />
+
+          <button 
+            onClick={handleSaveJson} 
+            disabled={selectedTables.length === 0}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-semibold px-3 ${
+              isDark 
+                ? 'bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 disabled:opacity-30' 
+                : 'bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-30'
+            }`}
+            title="Guardar modelo en archivo JSON"
+          >
+            <Download className="w-3.5 h-3.5" /> Guardar JSON
+          </button>
+          <button 
+            onClick={handleOpenJsonClick}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-semibold px-3 ${
+              isDark ? 'bg-gray-800 hover:bg-gray-700 text-gray-200' : 'bg-white border hover:bg-gray-50 text-gray-600'
+            }`}
+            title="Abrir modelo desde archivo JSON"
+          >
+            <Upload className="w-3.5 h-3.5" /> Cargar JSON
+          </button>
+
+          <div className={`w-px h-6 mx-2 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`} />
+
+          <button 
+            onClick={onClose}
+            className={`p-2 rounded-lg transition-colors text-red-500 ${isDark ? 'hover:bg-red-500/10' : 'hover:bg-red-50'}`}
+            title="Cerrar utilitario"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Main Content Area (Sidebar + Canvas) ─────────────────────────── */}
+      <div className="flex-1 flex min-h-0 relative">
+        {/* Left Table Selector Sidebar */}
+        <div className={`w-64 flex flex-col border-r shrink-0 ${
+          isDark ? 'border-gray-800 bg-gray-900/60' : 'border-gray-200 bg-white/80'
+        }`}>
+          <div className="p-3 border-b border-inherit space-y-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider opacity-60">Tablas Disponibles</h3>
+            <input 
+              type="text"
+              placeholder="Buscar tabla..."
+              value={tableSearch}
+              onChange={(e) => setTableSearch(e.target.value)}
+              className={`w-full px-2.5 py-1.5 rounded-lg border text-xs outline-none focus:ring-1 focus:ring-blue-500 ${
+                isDark ? 'bg-gray-950 border-gray-800 text-gray-200' : 'bg-gray-50 border-gray-300 text-gray-850'
+              }`}
+            />
+            <div className="grid grid-cols-2 gap-1 pt-1">
+              <button 
+                onClick={handleSelectAll} 
+                className="py-1 px-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold transition-all text-center"
+              >
+                Añadir todas
+              </button>
+              <button 
+                onClick={handleClearAll} 
+                className={`py-1 px-2 rounded text-[10px] font-bold transition-all text-center ${
+                  isDark ? 'bg-gray-800 hover:bg-gray-700' : 'bg-gray-200 hover:bg-gray-300'
+                }`}
+              >
+                Limpiar lienzo
+              </button>
+            </div>
+          </div>
+
+          {/* Table List Scrollable */}
+          <div className="flex-1 overflow-y-auto p-2 space-y-0.5 custom-scrollbar">
+            {isLoadingTables ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-2 opacity-60">
+                <span className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                <span className="text-[10px]">Cargando tablas...</span>
+              </div>
+            ) : (
+              <>
+                {filteredTables.map(t => {
+                  const isChecked = selectedTables.includes(t);
+                  return (
+                    <label 
+                      key={t}
+                      className={`flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-xs font-semibold ${
+                        isChecked 
+                          ? (isDark ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600')
+                          : (isDark ? 'hover:bg-gray-800 text-gray-300' : 'hover:bg-gray-100 text-gray-700')
+                      }`}
+                    >
+                      <input 
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleTable(t)}
+                        className="rounded border-gray-300 w-3.5 h-3.5 shrink-0"
+                      />
+                      <span className="truncate flex-1 font-mono">{t}</span>
+                    </label>
+                  );
+                })}
+                {filteredTables.length === 0 && (
+                  <div className="text-center py-10 text-xs opacity-40 italic">Ninguna tabla coincide</div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* ── INTERACTIVE CANVAS ─────────────────────────────────────────── */}
+        <div 
+          ref={canvasRef}
+          onMouseDown={handleCanvasMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onWheel={handleCanvasWheel}
+          className="flex-1 h-full overflow-hidden relative cursor-grab active:cursor-grabbing outline-none"
+          style={{
+            backgroundImage: gridBackground,
+            backgroundSize: `${24 * zoom}px ${24 * zoom}px`,
+            backgroundPosition: `${pan.x}px ${pan.y}px`,
+          }}
+        >
+          {/* Zoom/Pan helper panel bottom right */}
+          <div className={`absolute bottom-4 right-4 z-20 py-1.5 px-3 rounded-lg border text-[10px] font-medium pointer-events-none select-none opacity-50 ${
+            isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'
+          }`}>
+            Arrastra el fondo para paneo · Rueda para zoom · Arrastra cabecera de tabla para mover
+          </div>
+
+          {/* Scale Container */}
+          <div 
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: '0 0',
+              position: 'absolute',
+              width: '100%',
+              height: '100%',
+              pointerEvents: 'none' // allow dragging canvas background through nodes empty areas
+            }}
+          >
+            {/* SVG Relationship lines */}
+            <svg 
+              className="absolute inset-0 w-[10000px] h-[10000px]"
+              style={{ pointerEvents: 'auto' }}
+            >
+              <defs>
+                <marker 
+                  id="arrow" 
+                  viewBox="0 0 10 10" 
+                  refX="8" 
+                  refY="5" 
+                  markerWidth="6" 
+                  markerHeight="6" 
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#3b82f6" />
+                </marker>
+              </defs>
+              {renderEdges}
+            </svg>
+
+            {/* Table Nodes */}
+            {selectedTables.map(t => {
+              const node = nodes[t];
+              if (!node) return null;
+
+              // Filter columns for this specific table
+              const cols = tableData.columns.filter(c => c.tableName === t);
+              
+              // Define dynamic styling based on color
+              const headerColor = node.color || '#3b82f6';
+
+              return (
+                <div
+                  key={t}
+                  style={{
+                    position: 'absolute',
+                    left: `${node.x}px`,
+                    top: `${node.y}px`,
+                    width: `${node.width}px`,
+                    height: `${node.height}px`,
+                    pointerEvents: 'auto', // override parent pointerEvents
+                  }}
+                  className={`rounded-xl shadow-2xl border flex flex-col overflow-hidden group/node backdrop-blur-md transition-shadow hover:shadow-blue-500/5 ${
+                    isDark 
+                      ? 'bg-gray-900/90 border-gray-800' 
+                      : 'bg-white/95 border-gray-200'
+                  }`}
+                >
+                  {/* Node Header (handles dragging) */}
+                  <div
+                    onMouseDown={(e) => handleNodeHeaderMouseDown(e, t)}
+                    style={{ backgroundColor: headerColor }}
+                    className="h-10 px-3 flex items-center justify-between cursor-move text-white font-bold select-none text-xs tracking-tight shrink-0"
+                  >
+                    <span className="truncate pr-1 font-mono uppercase">{t}</span>
+                    
+                    {/* Header Color Picker & Actions */}
+                    <div className="flex items-center gap-1 opacity-60 group-hover/node:opacity-100 transition-opacity">
+                      {/* Simple color selector button */}
+                      <div className="flex items-center gap-0.5 mr-1">
+                        {PRESET_COLORS.slice(0, 4).map(c => (
+                          <button 
+                            key={c}
+                            onClick={() => handleSetNodeColor(t, c)}
+                            style={{ backgroundColor: c }}
+                            className={`w-2.5 h-2.5 rounded-full border border-white/20 transition-transform hover:scale-125 ${
+                              node.color === c ? 'scale-110 ring-1 ring-white' : ''
+                            }`}
+                          />
+                        ))}
+                      </div>
+
+                      <button 
+                        onClick={() => handleToggleTable(t)}
+                        className="p-1 hover:bg-black/10 rounded" 
+                        title="Quitar del lienzo"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Columns List Scrollable */}
+                  <div className="flex-1 overflow-y-auto p-1.5 space-y-1 custom-scrollbar text-[10px]">
+                    {cols.length > 0 ? (
+                      cols.map(c => {
+                        const isNullable = c.nullable === 'Y';
+                        // Crude PK guess (ends with _ID or ID) to highlight visually
+                        const isPk = c.columnName.toUpperCase() === 'ID' || c.columnName.toUpperCase().endsWith('_ID');
+                        
+                        return (
+                          <div 
+                            key={c.columnName}
+                            className={`flex items-center justify-between px-2 py-1 rounded transition-colors ${
+                              isDark ? 'hover:bg-gray-800/40 text-gray-300' : 'hover:bg-gray-100 text-gray-700'
+                            }`}
+                          >
+                            <span className={`font-mono flex items-center gap-1 truncate ${isPk ? 'font-bold text-yellow-500' : ''}`}>
+                              {isPk && <span className="text-[8px]">🔑</span>}
+                              {c.columnName}
+                            </span>
+                            <span className="font-mono text-[9px] opacity-50 shrink-0 ml-1.5">
+                              {c.dataType.toLowerCase()}{!isNullable && '*'}
+                            </span>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full opacity-40 py-10 gap-1.5">
+                        <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />
+                        <span>Cargando esquema...</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Resize handle (bottom right corner) */}
+                  <div
+                    onMouseDown={(e) => handleResizeHandleMouseDown(e, t)}
+                    className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-center justify-center"
+                  >
+                    {/* Visual indicators */}
+                    <svg width="6" height="6" viewBox="0 0 6 6" className="opacity-30 group-hover/node:opacity-100">
+                      <line x1="6" y1="0" x2="0" y2="6" stroke="currentColor" strokeWidth="1.5" />
+                      <line x1="6" y1="3" x2="3" y2="6" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Hidden file input for importing JSON */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".json"
+        style={{ display: 'none' }}
+        onChange={handleJsonFileChange}
+      />
+    </div>
+  );
+}

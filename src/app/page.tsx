@@ -17,9 +17,10 @@ import {
   Play, PlayCircle, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle,
   Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus,
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
-  Undo, Redo, Hammer, Save, FolderOpen
+  Undo, Redo, Hammer, Save, FolderOpen, Network
 } from 'lucide-react';
 import { ExecResult } from '@/types';
+import DiagramEditor from '@/components/DiagramEditor';
 
 // ── Toolbar Icon Button ──────────────────────────────────────────────────────
 function TbBtn({
@@ -122,7 +123,7 @@ export default function Home() {
     isDark, activeConnectionId, connections, addHistory,
     tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent, formatOptions,
     favorites, favoriteSections, addFavoriteFromSql, updateFavoriteSql, addFavoriteSection,
-    toast, hideToast,
+    toast, hideToast, showToast,
     history, historyRetentionDays, setHistoryRetentionDays, purgeExpiredHistory
   } = useAppStore();
   
@@ -144,6 +145,7 @@ export default function Home() {
   const [bottomTab, setBottomTab] = useState<'results' | 'dbms' | 'errors'>('results');
   const [formatModalOpen, setFormatModalOpen] = useState(false);
   const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
+  const [isDiagramOpen, setIsDiagramOpen] = useState(false);
   // Save modal: 'overwrite' = confirm overwrite existing fav | 'new' = create new fav
   const [saveModal, setSaveModal] = useState<'overwrite' | 'new' | null>(null);
 
@@ -1034,6 +1036,14 @@ export default function Home() {
 
           {/* ── Group: Settings ── */}
           <TbBtn isDark={isDark} icon={<CalendarClock className={iconSize} />} label="Config. Historial" onClick={() => setHistorySettingsOpen(true)} />
+          <TbBtn
+            isDark={isDark}
+            icon={<Network className={iconSize} />}
+            label="Diagrama Relacional"
+            onClick={() => setIsDiagramOpen(true)}
+            disabled={!activeConnection}
+            variant="primary"
+          />
           
           {/* DBMS Output toggle (compact) */}
           <div className="ml-auto flex items-center">
@@ -1392,6 +1402,13 @@ export default function Home() {
         accept=".sql,.txt"
         style={{ display: 'none' }}
         onChange={handleOpenFileChange}
+      />
+      <DiagramEditor
+        isOpen={isDiagramOpen}
+        onClose={() => setIsDiagramOpen(false)}
+        isDark={isDark}
+        activeConnection={activeConnection}
+        showToast={showToast}
       />
     </main>
   );
