@@ -69,6 +69,7 @@ export default function DiagramEditor({
   
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
   const [tableSearch, setTableSearch] = useState('');
+  const [hoveredRelation, setHoveredRelation] = useState<string | null>(null);
   
   // Navigation states (Zoom & Pan)
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -376,6 +377,15 @@ export default function DiagramEditor({
     return availableTables.filter(t => t.toLowerCase().includes(q));
   }, [availableTables, tableSearch]);
 
+  const isColumnInHoveredRelation = (tableName: string, columnName: string) => {
+    if (!hoveredRelation) return false;
+    const [fromPart, toPart] = hoveredRelation.split('->');
+    if (!fromPart || !toPart) return false;
+    const [fromTab, fromCol] = fromPart.split('.');
+    const [toTab, toCol] = toPart.split('.');
+    return (tableName === fromTab && columnName === fromCol) || (tableName === toTab && columnName === toCol);
+  };
+
   // Render SVG Edges (foreign key lines)
   const renderEdges = useMemo(() => {
     const drawnKeys = new Set<string>();
@@ -468,36 +478,64 @@ export default function DiagramEditor({
 
       const pathData = `M ${startX} ${startY} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${endX} ${endY}`;
 
+      const isHovered = hoveredRelation === relKey;
+      const isAnyHovered = hoveredRelation !== null;
+      const opacity = isAnyHovered ? (isHovered ? 1.0 : 0.25) : 0.75;
+      
+      const strokeColor = isHovered ? '#f59e0b' : '#3b82f6';
+      const strokeWidth = isHovered ? 3.5 : 2;
+      const textColor = isHovered 
+        ? (isDark ? '#fbbf24' : '#b45309') 
+        : (isDark ? '#93c5fd' : '#1e3a8a');
+      const textFontSize = isHovered ? "11" : "8";
+
       return (
-        <g key={`${rel.constraintName}-${index}`}>
-          {/* Glowing background line for hover effect */}
+        <g 
+          key={`${rel.constraintName}-${index}`}
+          style={{ opacity, transition: 'opacity 0.2s ease-in-out' }}
+        >
+          {/* Glowing background line for hover effect (much wider for easy hovering) */}
           <path
             d={pathData}
             fill="none"
-            stroke="rgba(59, 130, 246, 0.15)"
-            strokeWidth={8}
-            className="hover:stroke-blue-500/40 transition-colors cursor-pointer"
+            stroke="transparent"
+            strokeWidth={16}
+            className="cursor-pointer"
+            onMouseEnter={() => setHoveredRelation(relKey)}
+            onMouseLeave={() => setHoveredRelation(null)}
           >
             <title>{`${rel.constraintName}: ${rel.fromTable}(${rel.fromColumn}) -> ${rel.toTable}(${rel.toColumn})`}</title>
           </path>
+
+          {/* Visual glow path when hovered */}
+          {isHovered && (
+            <path
+              d={pathData}
+              fill="none"
+              stroke="#fbbf24"
+              strokeWidth={strokeWidth + 4}
+              className="opacity-20 pointer-events-none"
+            />
+          )}
+
           {/* Main edge path */}
           <path
             d={pathData}
             fill="none"
-            stroke="#3b82f6"
-            strokeWidth={2}
-            markerEnd="url(#arrow)"
-            className="pointer-events-none"
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            markerEnd={isHovered ? "url(#arrow-hover)" : "url(#arrow)"}
+            className="pointer-events-none transition-all duration-150"
           />
           {/* Label indicating constraint (small background pill) */}
           <text
             x={(startX + endX) / 2}
             y={(startY + endY) / 2 - 4}
-            fill={isDark ? '#93c5fd' : '#1e3a8a'}
-            fontSize="8"
+            fill={textColor}
+            fontSize={textFontSize}
             fontFamily="monospace"
             textAnchor="middle"
-            className="select-none pointer-events-none font-bold"
+            className="select-none pointer-events-none font-bold transition-all duration-150"
             style={{ textShadow: isDark ? '0 1px 2px #000' : '0 1px 2px #fff' }}
           >
             {rel.fromColumn} ➜ {rel.toColumn}
@@ -505,7 +543,7 @@ export default function DiagramEditor({
         </g>
       );
     });
-  }, [tableData.relations, nodes, isDark]);
+  }, [tableData.relations, nodes, isDark, hoveredRelation]);
 
   if (!isOpen) return null;
 
@@ -707,6 +745,17 @@ export default function DiagramEditor({
                 >
                   <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#3b82f6" />
                 </marker>
+                <marker 
+                  id="arrow-hover" 
+                  viewBox="0 0 10 10" 
+                  refX="8" 
+                  refY="5" 
+                  markerWidth="7" 
+                  markerHeight="7" 
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#f59e0b" />
+                </marker>
               </defs>
               {renderEdges}
             </svg>
@@ -780,12 +829,15 @@ export default function DiagramEditor({
                         const isNullable = c.nullable === 'Y';
                         // Crude PK guess (ends with _ID or ID) to highlight visually
                         const isPk = c.columnName.toUpperCase() === 'ID' || c.columnName.toUpperCase().endsWith('_ID');
+                        const isColHighlighted = isColumnInHoveredRelation(t, c.columnName);
                         
                         return (
                           <div 
                             key={c.columnName}
-                            className={`flex items-center justify-between px-2 py-1 rounded transition-colors ${
-                              isDark ? 'hover:bg-gray-800/40 text-gray-300' : 'hover:bg-gray-100 text-gray-700'
+                            className={`flex items-center justify-between px-2 py-1 rounded transition-all duration-150 ${
+                              isColHighlighted
+                                ? (isDark ? 'bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30' : 'bg-amber-100 text-amber-800 font-bold border border-amber-300')
+                                : (isDark ? 'hover:bg-gray-800/40 text-gray-300' : 'hover:bg-gray-100 text-gray-700')
                             }`}
                           >
                             <span className={`font-mono flex items-center gap-1 truncate ${isPk ? 'font-bold text-yellow-500' : ''}`}>
