@@ -6,7 +6,7 @@ import {
   Database, History, Star, Plus, Trash2, Edit2, Settings2,
   CheckCircle, Eye, Download, X, Copy, StarOff,
   FolderOpen, Clock, CloudDownload, CloudUpload,
-  ChevronRight, ChevronDown, Table, Code, Zap, Package, RefreshCw, Search, Play
+  ChevronRight, ChevronDown, Table, Code, Zap, Package, RefreshCw, Search, Play, Hammer, AlertTriangle
 } from 'lucide-react';
 import { Connection } from '@/types';
 import ConnectionModal from './ConnectionModal';
@@ -45,6 +45,29 @@ export default function Sidebar() {
     triggers: false
   });
   const [expandedPackages, setExpandedPackages] = useState<Record<string, boolean>>({});
+  
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    name: string;
+    type: string;
+    status: string;
+  } | null>(null);
+  const [compileErrorsModal, setCompileErrorsModal] = useState<{
+    name: string;
+    type: string;
+    errors: { line: number; position: number; text: string }[];
+  } | null>(null);
+  const [deleteObjectModal, setDeleteObjectModal] = useState<{
+    name: string;
+    type: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener('click', closeMenu);
+    return () => window.removeEventListener('click', closeMenu);
+  }, []);
 
   const activeConnection = connections.find(c => c.id === activeConnectionId);
 
@@ -64,6 +87,140 @@ export default function Sidebar() {
       showToast(err.message, 'error');
     } finally {
       setIsLoadingObjects(false);
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, name: string, type: string, status: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      name,
+      type,
+      status
+    });
+  };
+
+  const handleCompileObject = async (name: string, type: string) => {
+    if (!activeConnection) return;
+    
+    let compileSql = '';
+    const upperType = type.toUpperCase();
+    if (upperType === 'PACKAGE BODY') {
+      compileSql = `ALTER PACKAGE "${name}" COMPILE BODY`;
+    } else if (upperType === 'PACKAGE') {
+      compileSql = `ALTER PACKAGE "${name}" COMPILE`;
+    } else {
+      compileSql = `ALTER ${upperType} "${name}" COMPILE`;
+    }
+    
+    showToast(`Compilando ${type} ${name}...`, 'info');
+    try {
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: compileSql
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error de compilación');
+      
+      // Check if there are compilation errors in user_errors
+      const errorCheckSql = `
+        SELECT line, position, text 
+        FROM user_errors 
+        WHERE name = :name AND type = :type 
+        ORDER BY sequence
+      `;
+      const errRes = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: errorCheckSql,
+          binds: { name: name, type: upperType }
+        })
+      });
+      const errData = await errRes.json();
+      if (errRes.ok && errData.rows && errData.rows.length > 0) {
+        const errors = errData.rows.map((row: any) => ({
+          line: row.LINE || row.line || 0,
+          position: row.POSITION || row.position || 0,
+          text: row.TEXT || row.text || ''
+        }));
+        
+        setCompileErrorsModal({
+          name,
+          type,
+          errors
+        });
+        
+        showToast(`Compilado con errores en ${name}`, 'error');
+      } else {
+        showToast(`${type} ${name} compilado exitosamente ✓`, 'success');
+      }
+      
+      fetchObjects();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteObject = async (name: string, type: string) => {
+    if (!activeConnection) return;
+    
+    let dropSql = '';
+    const upperType = type.toUpperCase();
+    if (upperType === 'PACKAGE BODY') {
+      dropSql = `DROP PACKAGE BODY "${name}"`;
+    } else {
+      dropSql = `DROP ${upperType} "${name}"`;
+    }
+    
+    try {
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: dropSql
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al eliminar el objeto');
+      
+      showToast(`${type} ${name} eliminado exitosamente`, 'success');
+      setDeleteObjectModal(null);
+      fetchObjects();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleSaveObjectToFile = async (name: string, type: string) => {
+    if (!activeConnection) return;
+    showToast(`Obteniendo definición de ${name}...`, 'info');
+    try {
+      const res = await fetch('/api/oracle/object-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          name,
+          type
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al obtener código fuente');
+      
+      const blob = new Blob([data.source], { type: 'text/plain;charset=utf-8' });
+      saveAs(blob, `${name}_${type.replace(/\s+/g, '_')}.sql`);
+      showToast(`Archivo guardado exitosamente`, 'success');
+    } catch (err: any) {
+      showToast(err.message, 'error');
     }
   };
 
@@ -118,17 +275,17 @@ export default function Sidebar() {
     }
   };
 
-  const filterObjects = (list: string[] | undefined) => {
+  const filterObjects = (list: { name: string; status: string }[] | undefined) => {
     if (!list) return [];
     if (!objectSearch) return list;
     const q = objectSearch.toLowerCase();
-    return list.filter(item => item.toLowerCase().includes(q));
+    return list.filter(item => item.name.toLowerCase().includes(q));
   };
 
   const renderFolder = (
     label: string,
     key: string,
-    list: string[] | undefined,
+    list: { name: string; status: string }[] | undefined,
     icon: React.ReactNode,
     defaultType: string
   ) => {
@@ -156,24 +313,26 @@ export default function Sidebar() {
         {isExpanded && (
           <div className="pl-4 space-y-0.5 border-l border-gray-500/10 ml-2">
             {filtered.map((item) => {
-              let actualName = item;
+              let actualName = item.name;
               let actualType = defaultType;
-              if (defaultType === 'PACKAGE' && item.endsWith(' (BODY)')) {
-                actualName = item.replace(' (BODY)', '');
+              const isInvalid = item.status === 'INVALID';
+              if (defaultType === 'PACKAGE' && item.name.endsWith(' (BODY)')) {
+                actualName = item.name.replace(' (BODY)', '');
                 actualType = 'PACKAGE BODY';
               }
 
               return (
                 <div
-                  key={item}
+                  key={item.name}
                   onDoubleClick={() => handleObjectDoubleClick(actualName, actualType)}
+                  onContextMenu={(e) => handleContextMenu(e, actualName, actualType, item.status)}
                   className={`flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer transition-colors ${
                     isDark ? 'hover:bg-gray-800 text-gray-300' : 'hover:bg-gray-200 text-gray-700'
-                  }`}
-                  title="Doble clic para cargar en el editor"
+                  } ${isInvalid ? 'text-red-500 dark:text-red-400 font-semibold' : ''}`}
+                  title={`${item.name} (${item.status === 'INVALID' ? 'Inválido / Descompilado' : 'Válido'})\nDoble clic para cargar en el editor. Clic derecho para opciones.`}
                 >
                   {icon}
-                  <span className="truncate flex-1" style={{ fontSize: '11px' }}>{item}</span>
+                  <span className="truncate flex-1" style={{ fontSize: '11px' }}>{item.name}</span>
                 </div>
               );
             })}
@@ -194,13 +353,13 @@ export default function Sidebar() {
   };
 
   const renderPackagesFolder = (
-    specs: string[] | undefined,
-    bodies: string[] | undefined
+    specs: { name: string; status: string }[] | undefined,
+    bodies: { name: string; status: string }[] | undefined
   ) => {
     const isExpanded = expandedFolders.packages;
     const uniquePkgs = Array.from(new Set([
-      ...(specs || []),
-      ...(bodies || [])
+      ...(specs || []).map(s => s.name),
+      ...(bodies || []).map(b => b.name)
     ])).sort();
     
     // Filter packages by search query
@@ -231,8 +390,13 @@ export default function Sidebar() {
           <div className="pl-4 space-y-0.5 border-l border-gray-500/10 ml-2">
             {filtered.map((pkg) => {
               const isPkgExpanded = !!expandedPackages[pkg];
-              const hasSpec = specs?.includes(pkg);
-              const hasBody = bodies?.includes(pkg);
+              const specObj = specs?.find(s => s.name === pkg);
+              const bodyObj = bodies?.find(b => b.name === pkg);
+              const hasSpec = !!specObj;
+              const hasBody = !!bodyObj;
+
+              const isSpecInvalid = specObj?.status === 'INVALID';
+              const isBodyInvalid = bodyObj?.status === 'INVALID';
 
               return (
                 <div key={pkg} className="space-y-0.5">
@@ -258,10 +422,11 @@ export default function Sidebar() {
                       {hasSpec && (
                         <div
                           onDoubleClick={() => handleObjectDoubleClick(pkg, 'PACKAGE')}
+                          onContextMenu={(e) => handleContextMenu(e, pkg, 'PACKAGE', specObj?.status || 'VALID')}
                           className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md cursor-pointer transition-colors ${
                             isDark ? 'hover:bg-gray-800 text-gray-400 hover:text-gray-200' : 'hover:bg-gray-200 text-gray-600 hover:text-gray-800'
-                          }`}
-                          title="Doble clic para cargar Especificación en el editor"
+                          } ${isSpecInvalid ? 'text-red-500 dark:text-red-400 font-semibold' : ''}`}
+                          title={`Especificación (${specObj?.status === 'INVALID' ? 'Inválido' : 'Válido'})\nDoble clic para cargar Especificación en el editor. Clic derecho para opciones.`}
                         >
                           <Code className="w-3 h-3 text-purple-300" />
                           <span style={{ fontSize: '10px' }}>Especificación</span>
@@ -270,10 +435,11 @@ export default function Sidebar() {
                       {hasBody && (
                         <div
                           onDoubleClick={() => handleObjectDoubleClick(pkg, 'PACKAGE BODY')}
+                          onContextMenu={(e) => handleContextMenu(e, pkg, 'PACKAGE BODY', bodyObj?.status || 'VALID')}
                           className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md cursor-pointer transition-colors ${
                             isDark ? 'hover:bg-gray-800 text-gray-400 hover:text-gray-200' : 'hover:bg-gray-200 text-gray-600 hover:text-gray-800'
-                          }`}
-                          title="Doble clic para cargar Cuerpo en el editor"
+                          } ${isBodyInvalid ? 'text-red-500 dark:text-red-400 font-semibold' : ''}`}
+                          title={`Cuerpo (${bodyObj?.status === 'INVALID' ? 'Inválido' : 'Válido'})\nDoble clic para cargar Cuerpo en el editor. Clic derecho para opciones.`}
                         >
                           <Code className="w-3 h-3 text-purple-500" />
                           <span style={{ fontSize: '10px' }}>Cuerpo (Body)</span>
@@ -1046,6 +1212,181 @@ export default function Sidebar() {
                 className={`w-full py-1 text-xs font-medium opacity-60 hover:opacity-100 transition-opacity text-center mt-1 cursor-pointer`}
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Menu Contextual */}
+      {contextMenu && (
+        <div
+          className={`fixed z-[500] min-w-[180px] rounded-xl shadow-2xl border backdrop-blur-md p-1.5 flex flex-col gap-0.5 ${
+            isDark ? 'bg-gray-900/95 border-gray-700/80 text-gray-200' : 'bg-white/95 border-gray-200/80 text-gray-800'
+          }`}
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              handleObjectDoubleClick(contextMenu.name, contextMenu.type);
+              setContextMenu(null);
+            }}
+            className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-medium transition-colors text-left ${
+              isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
+            }`}
+          >
+            <Edit2 className="w-3.5 h-3.5 opacity-70" />
+            Cargar en el editor
+          </button>
+          
+          <button
+            onClick={() => {
+              handleSaveObjectToFile(contextMenu.name, contextMenu.type);
+              setContextMenu(null);
+            }}
+            className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-medium transition-colors text-left ${
+              isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
+            }`}
+          >
+            <Download className="w-3.5 h-3.5 opacity-70" />
+            Guardar en archivo
+          </button>
+          
+          {contextMenu.type.toUpperCase() !== 'TABLE' && (
+            <button
+              onClick={() => {
+                handleCompileObject(contextMenu.name, contextMenu.type);
+                setContextMenu(null);
+              }}
+              className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-medium transition-colors text-left ${
+                isDark ? 'hover:bg-gray-800 text-blue-400 hover:text-blue-300' : 'hover:bg-blue-50 text-blue-600 hover:text-blue-700'
+              }`}
+            >
+              <Hammer className="w-3.5 h-3.5" />
+              Compilar objeto
+            </button>
+          )}
+          
+          <div className={`h-px my-1 ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`} />
+          
+          <button
+            onClick={() => {
+              setDeleteObjectModal({ name: contextMenu.name, type: contextMenu.type });
+              setContextMenu(null);
+            }}
+            className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-colors text-left ${
+              isDark ? 'hover:bg-red-500/10 text-red-400 hover:text-red-300' : 'hover:bg-red-55 text-red-600 hover:text-red-700'
+            }`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Borrar (DROP)
+          </button>
+        </div>
+      )}
+
+      {/* Modal confirmacion DROP de objeto */}
+      {deleteObjectModal && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-sm rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 ${
+            isDark ? 'bg-gray-900 border-gray-700 text-gray-200' : 'bg-white border-gray-200 text-gray-800'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-red-500/10 text-red-500">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="font-bold text-base">Confirmar eliminación</h2>
+                <p className="text-xs opacity-50">Esta acción no se puede deshacer</p>
+              </div>
+            </div>
+            <p className="text-sm">
+              ¿Estás seguro de que deseas eliminar permanentemente el objeto <span className="font-semibold text-red-500">{deleteObjectModal.type} {deleteObjectModal.name}</span> de la base de datos?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDeleteObjectModal(null)}
+                className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${
+                  isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-600'
+                }`}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  handleDeleteObject(deleteObjectModal.name, deleteObjectModal.type);
+                  setDeleteObjectModal(null);
+                }}
+                className="flex-1 py-2 rounded-lg text-sm bg-red-600 hover:bg-red-500 text-white font-semibold transition-colors"
+              >
+                Eliminar (DROP)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {compileErrorsModal && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className={`w-full max-w-2xl rounded-2xl shadow-2xl border flex flex-col max-h-[80vh] overflow-hidden ${
+            isDark ? 'bg-gray-900 border-gray-700 text-gray-200 shadow-black/80' : 'bg-white border-gray-200 text-gray-800 shadow-gray-400/30'
+          }`}>
+            <div className={`flex items-start gap-4 p-5 border-b ${isDark ? 'border-gray-800/80 bg-gray-950/20' : 'border-gray-100 bg-gray-50/50'}`}>
+              <div className={`p-2.5 rounded-xl flex-shrink-0 ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-500'}`}>
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-bold leading-6">Errores de Compilación</h3>
+                <p className="text-xs opacity-60 mt-0.5 truncate">{compileErrorsModal.type} <strong className="opacity-90">{compileErrorsModal.name}</strong></p>
+              </div>
+              <button 
+                onClick={() => setCompileErrorsModal(null)} 
+                className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-gray-800 text-gray-400 hover:text-gray-200' : 'hover:bg-gray-100 text-gray-500 hover:text-gray-700'}`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className={`border-b text-gray-400 font-semibold ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
+                      <th className="py-2 px-3 w-16">Línea</th>
+                      <th className="py-2 px-3 w-16">Col.</th>
+                      <th className="py-2 px-3">Mensaje de Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {compileErrorsModal.errors.map((err, idx) => (
+                      <tr 
+                        key={idx} 
+                        className={`border-b font-mono transition-colors ${
+                          isDark 
+                            ? 'border-gray-800/60 hover:bg-red-500/5 text-gray-300' 
+                            : 'border-gray-100 hover:bg-red-50/30 text-gray-700'
+                        }`}
+                      >
+                        <td className="py-2.5 px-3 font-semibold text-red-500 dark:text-red-400">{err.line}</td>
+                        <td className="py-2.5 px-3 opacity-60">{err.position}</td>
+                        <td className="py-2.5 px-3 text-red-600/90 dark:text-red-300/90 whitespace-pre-wrap">{err.text}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className={`p-4 flex justify-end border-t ${isDark ? 'border-gray-800 bg-gray-950/20' : 'border-gray-100 bg-gray-50/30'}`}>
+              <button
+                onClick={() => setCompileErrorsModal(null)}
+                className={`py-2 px-5 rounded-xl text-xs font-semibold border transition-all active:scale-[0.98] cursor-pointer ${
+                  isDark
+                    ? 'border-gray-700 hover:border-gray-500 bg-gray-800 text-gray-200'
+                    : 'border-gray-300 hover:border-gray-400 bg-white text-gray-700'
+                }`}
+              >
+                Cerrar
               </button>
             </div>
           </div>

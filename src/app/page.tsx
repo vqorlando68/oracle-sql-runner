@@ -12,11 +12,12 @@ import { extractSqlParams } from '@/lib/sql-parser';
 import { getStatementAtCursor, splitStatements } from '@/lib/sql-utils';
 import FormatterConfigModal from '@/components/FormatterConfigModal';
 import { format } from 'sql-formatter';
+import { saveAs } from 'file-saver';
 import {
   Play, PlayCircle, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle,
   Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus,
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
-  Undo, Redo, Hammer
+  Undo, Redo, Hammer, Save, FolderOpen
 } from 'lucide-react';
 import { ExecResult } from '@/types';
 
@@ -76,6 +77,40 @@ function TbBtn({
   );
 }
 
+function extractObjectNameAndType(sql: string): { name: string; type: string } | null {
+  const cleanSql = sql.replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)--.*$/gm, ''); // remove comments
+  
+  // 1. Try matching CREATE statement with optional modifiers
+  const createRegex = /CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:EDITIONABLE|NONEDITIONABLE|FORCE|NO\s+FORCE)\s+)*(PROCEDURE|FUNCTION|PACKAGE(?:\s+BODY)?|TRIGGER|TYPE(?:\s+BODY)?|VIEW)\s+("?[a-zA-Z0-9_]+"?(?:\."?[a-zA-Z0-9_]+"?)?)/i;
+  let match = cleanSql.match(createRegex);
+  
+  // 2. Try matching ALTER ... COMPILE statement
+  if (!match) {
+    const alterRegex = /ALTER\s+(PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE|VIEW)\s+("?[a-zA-Z0-9_]+"?(?:\."?[a-zA-Z0-9_]+"?)?)\s+COMPILE(?:\s+BODY)?/i;
+    match = cleanSql.match(alterRegex);
+  }
+  
+  if (!match) return null;
+  
+  let type = match[1].toUpperCase();
+  const rawName = match[2].split('.').pop() || '';
+  
+  // Normalize ALTER PACKAGE ... COMPILE BODY to PACKAGE BODY
+  if (type === 'PACKAGE' && cleanSql.toUpperCase().includes('COMPILE BODY')) {
+    type = 'PACKAGE BODY';
+  }
+  
+  // If starts and ends with double quotes, preserve case and strip quotes
+  let name = rawName;
+  if (rawName.startsWith('"') && rawName.endsWith('"')) {
+    name = rawName.slice(1, -1);
+  } else {
+    name = rawName.toUpperCase();
+  }
+  
+  return { type, name };
+}
+
 function TbSep({ isDark }: { isDark: boolean }) {
   return <div className={`w-px h-6 mx-0.5 ${isDark ? 'bg-gray-700/60' : 'bg-gray-300/80'}`} />;
 }
@@ -92,12 +127,21 @@ export default function Home() {
   } = useAppStore();
   
   const [isExecuting, setIsExecuting] = useState(false);
+  const [executionElapsedTime, setExecutionElapsedTime] = useState(0);
+  const [executionType, setExecutionType] = useState<'statement' | 'script' | 'compile' | null>(null);
+  const [executionProgress, setExecutionProgress] = useState<{ current: number; total: number } | null>(null);
+  const [executionCurrentSql, setExecutionCurrentSql] = useState<string | null>(null);
+  
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const timerIntervalRef = useRef<any>(null);
+
   const [result, setResult] = useState<ExecResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [compileErrors, setCompileErrors] = useState<{ line: number; position: number; text: string }[]>([]);
   const [paramsModalOpen, setParamsModalOpen] = useState(false);
   const [detectedParams, setDetectedParams] = useState<string[]>([]);
   const [enableDbmsOutput, setEnableDbmsOutput] = useState(false);
-  const [bottomTab, setBottomTab] = useState<'results' | 'dbms'>('results');
+  const [bottomTab, setBottomTab] = useState<'results' | 'dbms' | 'errors'>('results');
   const [formatModalOpen, setFormatModalOpen] = useState(false);
   const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
   // Save modal: 'overwrite' = confirm overwrite existing fav | 'new' = create new fav
@@ -112,6 +156,84 @@ export default function Home() {
 
   const executeStatementRef = useRef<() => void>(() => {});
   const executeScriptRef = useRef<() => void>(() => {});
+
+  const startExecution = (type: 'statement' | 'script' | 'compile', sql: string | null = null) => {
+    setIsExecuting(true);
+    setExecutionType(type);
+    setExecutionElapsedTime(0);
+    setExecutionCurrentSql(sql);
+    setExecutionProgress(null);
+    setError(null);
+    setResult(null);
+    setCompileErrors([]);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    const startTime = Date.now();
+    timerIntervalRef.current = setInterval(() => {
+      setExecutionElapsedTime(Date.now() - startTime);
+    }, 100);
+
+    return controller;
+  };
+
+  const endExecution = () => {
+    setIsExecuting(false);
+    setExecutionType(null);
+    setExecutionCurrentSql(null);
+    setExecutionProgress(null);
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    abortControllerRef.current = null;
+  };
+
+  const handleCancelExecution = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    endExecution();
+    setError("Ejecución cancelada por el usuario.");
+    setBottomTab('results');
+    useAppStore.getState().showToast("Ejecución cancelada", "info");
+  };
+
+  const handleSaveToFile = () => {
+    if (!activeTab || !activeTab.query.trim()) {
+      useAppStore.getState().showToast('El editor está vacío', 'error');
+      return;
+    }
+    const blob = new Blob([activeTab.query], { type: 'text/plain;charset=utf-8' });
+    const filename = `${activeTab.title || 'query'}.sql`;
+    saveAs(blob, filename);
+    useAppStore.getState().showToast('Archivo SQL guardado', 'success');
+  };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleOpenFileClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleOpenFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (activeTab) {
+        updateTabContent(activeTab.id, content);
+        useAppStore.getState().showToast(`Archivo "${file.name}" cargado`, 'success');
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const activeConnection = connections.find(c => c.id === activeConnectionId);
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
@@ -319,16 +441,21 @@ export default function Home() {
     const statements = splitStatements(fullText);
     if (statements.length === 0) return;
 
-    setIsExecuting(true);
-    setError(null);
-    setResult(null);
-
+    const controller = startExecution('script');
     let lastResult: ExecResult | null = null;
     let totalAffected = 0;
     let totalDuration = 0;
     let hasError = false;
 
-    for (const stmt of statements) {
+    for (let i = 0; i < statements.length; i++) {
+      if (controller.signal.aborted) {
+        hasError = true;
+        break;
+      }
+      const stmt = statements[i];
+      setExecutionProgress({ current: i + 1, total: statements.length });
+      setExecutionCurrentSql(stmt);
+
       try {
         const res = await fetch('/api/oracle/execute', {
           method: 'POST',
@@ -338,7 +465,8 @@ export default function Home() {
             sql: stmt,
             binds: {},
             enableDbmsOutput
-          })
+          }),
+          signal: controller.signal
         });
 
         const data = await res.json();
@@ -366,7 +494,53 @@ export default function Home() {
           status: 'success',
           rowCount: data.rowCount
         });
+
+        // Check if this was a compile statement and fetch errors if any
+        const objInfo = extractObjectNameAndType(stmt);
+        if (objInfo && !controller.signal.aborted) {
+          const errorCheckSql = `
+            SELECT line, position, text 
+            FROM user_errors 
+            WHERE name = :name AND type = :type 
+            ORDER BY sequence
+          `;
+          const errRes = await fetch('/api/oracle/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              connection: activeConnection,
+              sql: errorCheckSql,
+              binds: { name: objInfo.name, type: objInfo.type }
+            }),
+            signal: controller.signal
+          });
+          const errData = await errRes.json();
+          if (errRes.ok && errData.rows && errData.rows.length > 0) {
+            const formattedErrors = errData.rows.map((row: any) => {
+              const line = row.LINE || row.line || 0;
+              const pos = row.POSITION || row.position || 0;
+              const text = row.TEXT || row.text || '';
+              return `Línea ${line}, Columna ${pos}: ${text}`;
+            }).join('\n');
+
+            const errors = errData.rows.map((row: any) => ({
+              line: row.LINE || row.line || 0,
+              position: row.POSITION || row.position || 0,
+              text: row.TEXT || row.text || ''
+            }));
+
+            setCompileErrors(errors);
+            setError(`Compilado con errores en ${objInfo.type} ${objInfo.name}`);
+            setBottomTab('errors');
+            hasError = true;
+            break;
+          }
+        }
       } catch (err: any) {
+        if (err.name === 'AbortError') {
+          hasError = true;
+          break;
+        }
         setError(`Error en statement:\n${stmt.substring(0, 200)}...\n\n${err.message}`);
         setBottomTab('results');
         addHistory({
@@ -396,9 +570,10 @@ export default function Home() {
       }
     }
 
-    setIsExecuting(false);
+    const wasAborted = controller.signal.aborted;
+    endExecution();
 
-    if (!hasError) {
+    if (!hasError && !wasAborted) {
       useAppStore.getState().showToast(
         `Script ejecutado: ${statements.length} statement${statements.length > 1 ? 's' : ''} · ${totalDuration}ms`,
         'success'
@@ -431,9 +606,7 @@ export default function Home() {
 
     if (!queryToRun.trim()) return;
 
-    setIsExecuting(true);
-    setError(null);
-    setResult(null);
+    const controller = startExecution('compile', queryToRun);
 
     try {
       // 1. Run the compilation/execution query
@@ -445,7 +618,8 @@ export default function Home() {
           sql: queryToRun,
           binds: {},
           enableDbmsOutput
-        })
+        }),
+        signal: controller.signal
       });
 
       const data = await res.json();
@@ -471,13 +645,9 @@ export default function Home() {
       });
 
       // 2. Check for PL/SQL object creation
-      const cleanSql = queryToRun.replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)--.*$/gm, ''); // remove comments
-      const match = cleanSql.match(/CREATE\s+(?:OR\s+REPLACE\s+)?(PROCEDURE|FUNCTION|PACKAGE(?:\s+BODY)?|TRIGGER|TYPE)\s+([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)?)/i);
+      const objInfo = extractObjectNameAndType(queryToRun);
       
-      if (match) {
-        let type = match[1].toUpperCase();
-        let name = match[2].toUpperCase().split('.').pop() || ''; // remove schema prefix if any
-
+      if (objInfo) {
         // Check if there are compilation errors in user_errors
         const errorCheckSql = `
           SELECT line, position, text 
@@ -486,14 +656,17 @@ export default function Home() {
           ORDER BY sequence
         `;
 
+        if (controller.signal.aborted) return;
+
         const errRes = await fetch('/api/oracle/execute', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             connection: activeConnection,
             sql: errorCheckSql,
-            binds: { name, type }
-          })
+            binds: { name: objInfo.name, type: objInfo.type }
+          }),
+          signal: controller.signal
         });
 
         const errData = await errRes.json();
@@ -505,9 +678,16 @@ export default function Home() {
             return `Línea ${line}, Columna ${pos}: ${text}`;
           }).join('\n');
 
-          setError(`Compilado con errores en ${type} ${name}:\n\n${formattedErrors}`);
-          setBottomTab('results');
-          useAppStore.getState().showToast(`Compilado con errores en ${name}`, 'error');
+          const errors = errData.rows.map((row: any) => ({
+            line: row.LINE || row.line || 0,
+            position: row.POSITION || row.position || 0,
+            text: row.TEXT || row.text || ''
+          }));
+
+          setCompileErrors(errors);
+          setError(`Compilado con errores en ${objInfo.type} ${objInfo.name}`);
+          setBottomTab('errors');
+          useAppStore.getState().showToast(`Compilado con errores en ${objInfo.name}`, 'error');
           return;
         }
       }
@@ -516,6 +696,7 @@ export default function Home() {
       useAppStore.getState().showToast('Compilado exitosamente ✓', 'success');
 
     } catch (err: any) {
+      if (err.name === 'AbortError') return;
       setError(err.message);
       setBottomTab('results');
       addHistory({
@@ -528,7 +709,7 @@ export default function Home() {
         error: err.message
       });
     } finally {
-      setIsExecuting(false);
+      endExecution();
     }
   };
 
@@ -538,9 +719,7 @@ export default function Home() {
 
   // ── Execute single SQL ─────────────────────────────────────────────────────
   const executeSql = async (query: string, binds: Record<string, any>, bindTypes?: Record<string, string>) => {
-    setIsExecuting(true);
-    setError(null);
-    setResult(null);
+    const controller = startExecution('statement', query);
 
     try {
       const res = await fetch('/api/oracle/execute', {
@@ -552,7 +731,8 @@ export default function Home() {
           binds,
           bindTypes,
           enableDbmsOutput
-        })
+        }),
+        signal: controller.signal
       });
 
       const data = await res.json();
@@ -577,7 +757,49 @@ export default function Home() {
         status: 'success',
         rowCount: data.rowCount
       });
+
+      // Check if this was a compile statement and fetch errors if any
+      const objInfo = extractObjectNameAndType(query);
+      if (objInfo && !controller.signal.aborted) {
+        const errorCheckSql = `
+          SELECT line, position, text 
+          FROM user_errors 
+          WHERE name = :name AND type = :type 
+          ORDER BY sequence
+        `;
+        const errRes = await fetch('/api/oracle/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connection: activeConnection,
+            sql: errorCheckSql,
+            binds: { name: objInfo.name, type: objInfo.type }
+          }),
+          signal: controller.signal
+        });
+        const errData = await errRes.json();
+        if (errRes.ok && errData.rows && errData.rows.length > 0) {
+          const formattedErrors = errData.rows.map((row: any) => {
+            const line = row.LINE || row.line || 0;
+            const pos = row.POSITION || row.position || 0;
+            const text = row.TEXT || row.text || '';
+            return `Línea ${line}, Columna ${pos}: ${text}`;
+          }).join('\n');
+
+          const errors = errData.rows.map((row: any) => ({
+            line: row.LINE || row.line || 0,
+            position: row.POSITION || row.position || 0,
+            text: row.TEXT || row.text || ''
+          }));
+
+          setCompileErrors(errors);
+          setError(`Compilado con errores en ${objInfo.type} ${objInfo.name}`);
+          setBottomTab('errors');
+          useAppStore.getState().showToast(`Compilado con errores en ${objInfo.name}`, 'error');
+        }
+      }
     } catch (err: any) {
+      if (err.name === 'AbortError') return;
       setError(err.message);
       setBottomTab('results');
       addHistory({
@@ -590,7 +812,7 @@ export default function Home() {
         error: err.message
       });
     } finally {
-      setIsExecuting(false);
+      endExecution();
     }
   };
 
@@ -679,6 +901,15 @@ export default function Home() {
     }
   };
 
+  const handleGoToErrorLine = (line: number, position: number) => {
+    const editor = editorRef.current;
+    if (editor) {
+      editor.focus();
+      editor.revealLineInCenter(line);
+      editor.setPosition({ lineNumber: line, column: position || 1 });
+    }
+  };
+
   const iconSize = 'w-[18px] h-[18px]';
   const bg = isDark ? 'bg-gray-950 text-gray-200' : 'bg-white text-gray-800';
 
@@ -732,6 +963,21 @@ export default function Home() {
             onClick={handleSave}
             disabled={!activeTab?.query?.trim()}
             variant="warning"
+          />
+          <TbBtn
+            isDark={isDark}
+            icon={<Save className={iconSize} />}
+            label="Guardar en archivo"
+            onClick={handleSaveToFile}
+            disabled={!activeTab?.query?.trim()}
+            variant="success"
+          />
+          <TbBtn
+            isDark={isDark}
+            icon={<FolderOpen className={iconSize} />}
+            label="Abrir archivo"
+            onClick={handleOpenFileClick}
+            variant="default"
           />
 
           <TbSep isDark={isDark} />
@@ -871,6 +1117,20 @@ export default function Home() {
             >
               <div className="flex items-center gap-2"><MessageSquare className="w-3.5 h-3.5" /> DBMS Output</div>
             </button>
+            <button 
+              onClick={() => setBottomTab('errors')}
+              className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${bottomTab === 'errors' ? 'border-red-500 text-red-500' : 'border-transparent opacity-60 hover:opacity-100'}`}
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-500" /> 
+                Errores
+                {compileErrors.length > 0 && (
+                  <span className="text-[10px] bg-red-500 text-white font-bold rounded-full px-1.5 leading-4">
+                    {compileErrors.length}
+                  </span>
+                )}
+              </div>
+            </button>
 
             {result && (
               <div className="flex items-center gap-4 text-xs ml-auto pr-2">
@@ -882,14 +1142,7 @@ export default function Home() {
           </div>
 
           <div className="flex-1 overflow-hidden relative">
-            {isExecuting ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/5 backdrop-blur-[1px] z-10">
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                  <span className="text-sm font-medium animate-pulse opacity-80">Ejecutando...</span>
-                </div>
-              </div>
-            ) : null}
+            {null}
 
             {bottomTab === 'results' && (
               <>
@@ -933,6 +1186,58 @@ export default function Home() {
                     ))
                   ) : (
                     <div className="opacity-30 italic text-center mt-10">No DBMS_OUTPUT. Activa la casilla &apos;DBMS_OUT&apos; antes de ejecutar PL/SQL.</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {bottomTab === 'errors' && (
+              <div className="h-full flex flex-col overflow-hidden">
+                <div className={`p-2 border-b flex justify-between items-center ${isDark ? 'border-gray-800 bg-gray-900/50' : 'border-gray-200 bg-gray-50'}`}>
+                  <span className="text-sm opacity-70">Errores de Compilación (Doble clic en una fila para ir a la línea en el editor)</span>
+                  {compileErrors.length > 0 && (
+                    <button 
+                      onClick={() => setCompileErrors([])}
+                      className="p-1.5 rounded hover:bg-red-500/10 text-red-500 flex items-center gap-1 text-xs font-medium"
+                      title="Clear Errors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Limpiar Errores
+                    </button>
+                  )}
+                </div>
+                <div className="flex-1 p-4 overflow-auto custom-scrollbar">
+                  {compileErrors.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className={`border-b text-gray-400 font-semibold ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
+                            <th className="py-2 px-3 w-16">Línea</th>
+                            <th className="py-2 px-3 w-16">Col.</th>
+                            <th className="py-2 px-3">Mensaje de Error</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {compileErrors.map((err, idx) => (
+                            <tr 
+                              key={idx} 
+                              onDoubleClick={() => handleGoToErrorLine(err.line, err.position)}
+                              className={`border-b font-mono transition-colors cursor-pointer select-none ${
+                                isDark 
+                                  ? 'border-gray-800/60 hover:bg-red-500/5 text-gray-300' 
+                                  : 'border-gray-100 hover:bg-red-50/30 text-gray-700'
+                              }`}
+                              title="Doble clic para ir a la línea en el editor"
+                            >
+                              <td className="py-2.5 px-3 font-semibold text-red-500 dark:text-red-400">{err.line}</td>
+                              <td className="py-2.5 px-3 opacity-60">{err.position}</td>
+                              <td className="py-2.5 px-3 text-red-600/90 dark:text-red-300/90 whitespace-pre-wrap">{err.text}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="opacity-30 italic text-center mt-10">No hay errores de compilación.</div>
                   )}
                 </div>
               </div>
@@ -1015,6 +1320,55 @@ export default function Home() {
         />
       )}
 
+      {isExecuting && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-fade-in">
+          <div className={`w-full max-w-md rounded-2xl shadow-2xl border p-6 flex flex-col items-center text-center gap-6 transform scale-100 transition-all ${
+            isDark ? 'bg-gray-900/80 border-gray-700/80 text-gray-200 shadow-black/80' : 'bg-white/80 border-gray-200/80 text-gray-800 shadow-gray-400/30'
+          }`}>
+            <div className="relative">
+              <div className="absolute inset-0 rounded-full bg-blue-500/20 blur-md animate-ping" />
+              <div className="relative p-4 rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/30">
+                <Loader2 className="w-8 h-8 animate-spin" />
+              </div>
+            </div>
+            
+            <div className="space-y-1 w-full">
+              <h3 className="font-bold text-lg tracking-tight">
+                {executionType === 'script' ? 'Ejecutando Script' : executionType === 'compile' ? 'Compilando PL/SQL' : 'Ejecutando Sentencia'}
+              </h3>
+              {executionProgress && (
+                <p className="text-xs opacity-60 font-semibold uppercase tracking-wider">
+                  Sentencia {executionProgress.current} de {executionProgress.total}
+                </p>
+              )}
+            </div>
+
+            <div className={`px-6 py-3 rounded-2xl font-mono text-3xl font-bold tracking-wider ${
+              isDark ? 'bg-gray-950/60 text-blue-400 border border-gray-800' : 'bg-gray-100 text-blue-600 border border-gray-200'
+            }`}>
+              {(executionElapsedTime / 1000).toFixed(1)}s
+            </div>
+
+            {executionCurrentSql && (
+              <div className={`w-full max-h-24 overflow-y-auto text-left font-mono text-[10px] p-3 rounded-lg border leading-normal custom-scrollbar ${
+                isDark ? 'bg-gray-950/40 border-gray-800/80 text-gray-400' : 'bg-gray-50 border-gray-200 text-gray-600'
+              }`}>
+                <span className="whitespace-pre-wrap">{executionCurrentSql}</span>
+              </div>
+            )}
+
+            <button
+              onClick={handleCancelExecution}
+              className="w-full py-3 px-4 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-500 active:scale-[0.98] transition-all cursor-pointer shadow-lg shadow-red-500/10 hover:shadow-red-500/20 flex items-center justify-center gap-2"
+            >
+              <X className="w-4 h-4" /> Cancelar Ejecución
+            </button>
+          </div>
+        </div>
+      )}
+
+
+
       {toast && (
         <div className="fixed bottom-5 right-5 z-[200] flex items-center gap-2 px-4 py-3 rounded-lg shadow-xl border backdrop-blur-md bg-opacity-90 transition-all duration-300 transform translate-y-0 animate-bounce-short"
           style={{
@@ -1032,6 +1386,13 @@ export default function Home() {
           </button>
         </div>
       )}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".sql,.txt"
+        style={{ display: 'none' }}
+        onChange={handleOpenFileChange}
+      />
     </main>
   );
 }

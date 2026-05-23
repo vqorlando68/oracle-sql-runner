@@ -1,112 +1,313 @@
-/**
- * Given the full editor text and a 1-based line number,
- * returns the single SQL statement surrounding that line.
- *
- * Statements are delimited by `;` or standalone `/` on a line.
- * PL/SQL blocks (BEGIN…END, DECLARE…BEGIN…END, CREATE … AS/IS … END)
- * are treated as a single statement terminated by `/` on its own line.
- */
-export function getStatementAtCursor(text: string, cursorLine: number): string {
-  if (!text.trim()) return '';
+export interface StatementInfo {
+  text: string;
+  startLine: number;
+  endLine: number;
+}
 
-  const lines = text.split(/\r?\n/);
-  // Build an array of { startLine, endLine, text } for each statement
-  const statements: { startLine: number; endLine: number; text: string }[] = [];
+/**
+ * Scans forward to find the next alphanumeric word or symbol, skipping comments,
+ * strings, and whitespace.
+ */
+function getNextWord(text: string, startIndex: number): string {
+  let i = startIndex;
+  let inComment: 'single-line' | 'multi-line' | null = null;
+  let inString: string | null = null;
+  
+  while (i < text.length) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+    
+    if (inComment === 'single-line') {
+      if (char === '\n') inComment = null;
+      i++;
+      continue;
+    }
+    if (inComment === 'multi-line') {
+      if (char === '*' && nextChar === '/') {
+        inComment = null;
+        i += 2;
+      } else {
+        i++;
+      }
+      continue;
+    }
+    if (inString) {
+      if (char === inString) {
+        if (nextChar === inString) {
+          i += 2;
+        } else {
+          inString = null;
+          i++;
+        }
+      } else {
+        i++;
+      }
+      continue;
+    }
+    
+    // Check for comment start
+    if (char === '-' && nextChar === '-') {
+      inComment = 'single-line';
+      i += 2;
+      continue;
+    }
+    if (char === '/' && nextChar === '*') {
+      inComment = 'multi-line';
+      i += 2;
+      continue;
+    }
+    
+    // Check for string start
+    if (char === "'" || char === '"') {
+      inString = char;
+      i++;
+      continue;
+    }
+    
+    // Skip whitespace
+    if (/\s/.test(char)) {
+      i++;
+      continue;
+    }
+    
+    // Check for word characters
+    if (/[a-zA-Z0-9_]/.test(char)) {
+      let word = '';
+      while (i < text.length && /[a-zA-Z0-9_]/.test(text[i])) {
+        word += text[i];
+        i++;
+      }
+      return word.toUpperCase();
+    }
+    
+    // If it's a symbol like ;, /, etc.
+    return char;
+  }
+  return '';
+}
+
+/**
+ * Splits a SQL/PLSQL script into individual statements with start/end lines.
+ * Supports nesting level checking for BEGIN/END PL/SQL blocks and standalone '/'.
+ */
+export function parseStatements(text: string): StatementInfo[] {
+  const statements: StatementInfo[] = [];
+  if (!text.trim()) return statements;
 
   let currentLines: string[] = [];
-  let startLine = 1;
+  let currentStartLine = 1;
+  let currentLine = 1;
+  
+  let inString: string | null = null;
+  let inComment: 'single-line' | 'multi-line' | null = null;
+  
   let inPlSqlBlock = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  let hasBeginBeenSeen = false;
+  let nestingLevel = 0;
+  
+  const lines = text.split(/\r?\n/);
+  
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
     const trimmed = line.trim();
-    const lineNum = i + 1;
-
-    // Detect PL/SQL block start
-    if (!inPlSqlBlock) {
-      const upperTrimmed = trimmed.toUpperCase();
-      if (
-        upperTrimmed.startsWith('BEGIN') ||
-        upperTrimmed.startsWith('DECLARE') ||
-        /^CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE|PACKAGE|TRIGGER|TYPE)/i.test(trimmed)
-      ) {
-        inPlSqlBlock = true;
-      }
-    }
-
-    // Check for standalone `/` (PL/SQL block terminator)
-    if (trimmed === '/') {
+    currentLine = lineIdx + 1;
+    
+    // Check if the line is a standalone slash `/`
+    if (!inString && !inComment && trimmed === '/') {
       if (currentLines.length > 0) {
-        statements.push({
-          startLine,
-          endLine: lineNum - 1,
-          text: currentLines.join('\n').trim()
-        });
+        const stmtText = currentLines.join('\n').trim();
+        if (stmtText) {
+          statements.push({
+            text: stmtText,
+            startLine: currentStartLine,
+            endLine: currentLine - 1
+          });
+        }
         currentLines = [];
       }
-      startLine = lineNum + 1;
       inPlSqlBlock = false;
+      hasBeginBeenSeen = false;
+      nestingLevel = 0;
+      currentStartLine = currentLine + 1;
       continue;
     }
-
-    // For non-PL/SQL, split on semicolons
-    if (!inPlSqlBlock && trimmed.endsWith(';')) {
-      currentLines.push(line);
-      const stmtText = currentLines.join('\n').trim();
-      // Remove trailing semicolon for execution
-      const cleaned = stmtText.replace(/;\s*$/, '').trim();
-      if (cleaned) {
-        statements.push({
-          startLine,
-          endLine: lineNum,
-          text: cleaned
-        });
+    
+    let lineStartIdx = 0;
+    let i = 0;
+    
+    while (i < line.length) {
+      const char = line[i];
+      const nextChar = line[i + 1];
+      
+      if (inComment === 'single-line') {
+        break; 
       }
-      currentLines = [];
-      startLine = lineNum + 1;
-      inPlSqlBlock = false;
-      continue;
-    }
-
-    // For PL/SQL blocks, a line ending with `;` after END means block end
-    if (inPlSqlBlock && /^END\s*;?\s*$/i.test(trimmed)) {
-      currentLines.push(line);
-      const stmtText = currentLines.join('\n').trim();
-      if (stmtText) {
-        statements.push({
-          startLine,
-          endLine: lineNum,
-          text: stmtText
-        });
+      
+      if (inComment === 'multi-line') {
+        if (char === '*' && nextChar === '/') {
+          inComment = null;
+          i += 2;
+        } else {
+          i++;
+        }
+        continue;
       }
-      currentLines = [];
-      startLine = lineNum + 1;
-      inPlSqlBlock = false;
-      continue;
+      
+      if (inString) {
+        if (char === inString) {
+          if (nextChar === inString) {
+            i += 2;
+          } else {
+            inString = null;
+            i++;
+          }
+        } else {
+          i++;
+        }
+        continue;
+      }
+      
+      if (char === '-' && nextChar === '-') {
+        inComment = 'single-line';
+        i += 2;
+        continue;
+      }
+      if (char === '/' && nextChar === '*') {
+        inComment = 'multi-line';
+        i += 2;
+        continue;
+      }
+      
+      if (char === "'" || char === '"') {
+        inString = char;
+        i++;
+        continue;
+      }
+      
+      // We check at word boundaries
+      if (i === 0 || !/[a-zA-Z0-9_]/.test(line[i - 1])) {
+        const remainingInLine = line.slice(i);
+        
+        if (!inPlSqlBlock) {
+          if (/^(DECLARE|BEGIN)\b/i.test(remainingInLine)) {
+            inPlSqlBlock = true;
+            if (/^BEGIN\b/i.test(remainingInLine)) {
+              hasBeginBeenSeen = true;
+              nestingLevel = 1;
+            } else {
+              hasBeginBeenSeen = false;
+              nestingLevel = 0;
+            }
+          } else if (/^CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:EDITIONABLE|NONEDITIONABLE|FORCE|NO\s+FORCE)\s+)*(PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE)\b/i.test(remainingInLine)) {
+            inPlSqlBlock = true;
+            hasBeginBeenSeen = false;
+            nestingLevel = 0;
+          }
+        } else {
+          if (/^BEGIN\b/i.test(remainingInLine)) {
+            hasBeginBeenSeen = true;
+            nestingLevel++;
+          } else if (/^END\b/i.test(remainingInLine)) {
+            // Check next word in the entire remaining text
+            let absoluteIndex = 0;
+            for (let l = 0; l < lineIdx; l++) {
+              absoluteIndex += lines[l].length + 1;
+            }
+            absoluteIndex += i + 3; // position after 'END'
+            
+            const nextWord = getNextWord(text, absoluteIndex);
+            const ignoreList = ['IF', 'LOOP', 'CASE', 'RECORD'];
+            if (!ignoreList.includes(nextWord)) {
+              nestingLevel = Math.max(0, nestingLevel - 1);
+            }
+          }
+        }
+      }
+      
+      // Semicolon splitting for non-PL/SQL
+      if (char === ';' && !inPlSqlBlock) {
+        const currentLineText = line.slice(lineStartIdx, i);
+        if (currentLineText.trim() || currentLines.length > 0) {
+          currentLines.push(currentLineText);
+        }
+        
+        const stmtText = currentLines.join('\n').trim();
+        const cleaned = stmtText.replace(/;\s*$/, '').trim();
+        if (cleaned) {
+          statements.push({
+            text: cleaned,
+            startLine: currentStartLine,
+            endLine: currentLine
+          });
+        }
+        currentLines = [];
+        currentStartLine = currentLine;
+        lineStartIdx = i + 1;
+        i++;
+        continue;
+      }
+      
+      // PL/SQL block ending at semicolon when nestingLevel is 0
+      if (char === ';' && inPlSqlBlock && hasBeginBeenSeen && nestingLevel === 0) {
+        const currentLineText = line.slice(lineStartIdx, i + 1); // Include semicolon
+        currentLines.push(currentLineText);
+        
+        const stmtText = currentLines.join('\n').trim();
+        if (stmtText) {
+          statements.push({
+            text: stmtText,
+            startLine: currentStartLine,
+            endLine: currentLine
+          });
+        }
+        currentLines = [];
+        inPlSqlBlock = false;
+        hasBeginBeenSeen = false;
+        currentStartLine = currentLine + 1;
+        lineStartIdx = i + 1;
+        i++;
+        continue;
+      }
+      
+      i++;
     }
-
-    if (currentLines.length === 0 && trimmed === '') {
-      startLine = lineNum + 1;
-      continue;
+    
+    // Add the remaining part of the line if any
+    if (inComment === 'single-line') {
+      inComment = null;
     }
-
-    currentLines.push(line);
+    const remainingLineText = line.slice(lineStartIdx);
+    if (remainingLineText.trim() !== '' || currentLines.length > 0) {
+      currentLines.push(remainingLineText);
+    }
   }
-
-  // Remaining text
+  
+  // Push any remaining text
   if (currentLines.length > 0) {
     const stmtText = currentLines.join('\n').trim();
     if (stmtText) {
-      // Remove trailing semicolon if present
-      const cleaned = stmtText.replace(/;\s*$/, '').trim();
-      statements.push({
-        startLine,
-        endLine: lines.length,
-        text: cleaned
-      });
+      const cleaned = inPlSqlBlock ? stmtText : stmtText.replace(/;\s*$/, '').trim();
+      if (cleaned) {
+        statements.push({
+          text: cleaned,
+          startLine: currentStartLine,
+          endLine: lines.length
+        });
+      }
     }
   }
+  
+  return statements;
+}
 
+/**
+ * Given the full editor text and a 1-based line number,
+ * returns the single SQL statement surrounding that line.
+ */
+export function getStatementAtCursor(text: string, cursorLine: number): string {
+  const statements = parseStatements(text);
+  if (statements.length === 0) return '';
+  
   // Find the statement that contains cursorLine
   for (const stmt of statements) {
     if (cursorLine >= stmt.startLine && cursorLine <= stmt.endLine) {
@@ -114,7 +315,7 @@ export function getStatementAtCursor(text: string, cursorLine: number): string {
     }
   }
 
-  // Fallback: if cursor is between statements (empty lines), find the nearest previous
+  // Fallback: if cursor is between statements, find the nearest previous
   let nearest = '';
   for (const stmt of statements) {
     if (stmt.endLine <= cursorLine) {
@@ -123,7 +324,7 @@ export function getStatementAtCursor(text: string, cursorLine: number): string {
   }
 
   // If nothing before, try the first statement after
-  if (!nearest) {
+  if (!nearest && statements.length > 0) {
     for (const stmt of statements) {
       if (stmt.startLine >= cursorLine) {
         nearest = stmt.text;
@@ -132,78 +333,12 @@ export function getStatementAtCursor(text: string, cursorLine: number): string {
     }
   }
 
-  return nearest;
+  return nearest || statements[0].text;
 }
 
 /**
  * Splits a SQL script into individual statements.
- * Handles PL/SQL blocks terminated by `/` and regular statements terminated by `;`.
  */
 export function splitStatements(text: string): string[] {
-  if (!text.trim()) return [];
-
-  const lines = text.split(/\r?\n/);
-  const statements: string[] = [];
-
-  let currentLines: string[] = [];
-  let inPlSqlBlock = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    // Detect PL/SQL block start
-    if (!inPlSqlBlock) {
-      const upperTrimmed = trimmed.toUpperCase();
-      if (
-        upperTrimmed.startsWith('BEGIN') ||
-        upperTrimmed.startsWith('DECLARE') ||
-        /^CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE|PACKAGE|TRIGGER|TYPE)/i.test(trimmed)
-      ) {
-        inPlSqlBlock = true;
-      }
-    }
-
-    // Standalone `/`
-    if (trimmed === '/') {
-      if (currentLines.length > 0) {
-        const stmtText = currentLines.join('\n').trim();
-        if (stmtText) statements.push(stmtText);
-        currentLines = [];
-      }
-      inPlSqlBlock = false;
-      continue;
-    }
-
-    // Non-PL/SQL semicolon terminator
-    if (!inPlSqlBlock && trimmed.endsWith(';')) {
-      currentLines.push(line);
-      const stmtText = currentLines.join('\n').trim().replace(/;\s*$/, '').trim();
-      if (stmtText) statements.push(stmtText);
-      currentLines = [];
-      continue;
-    }
-
-    // PL/SQL END detection
-    if (inPlSqlBlock && /^END\s*;?\s*$/i.test(trimmed)) {
-      currentLines.push(line);
-      const stmtText = currentLines.join('\n').trim();
-      if (stmtText) statements.push(stmtText);
-      currentLines = [];
-      inPlSqlBlock = false;
-      continue;
-    }
-
-    if (currentLines.length === 0 && trimmed === '') continue;
-
-    currentLines.push(line);
-  }
-
-  // Remaining
-  if (currentLines.length > 0) {
-    const stmtText = currentLines.join('\n').trim().replace(/;\s*$/, '').trim();
-    if (stmtText) statements.push(stmtText);
-  }
-
-  return statements;
+  return parseStatements(text).map(s => s.text);
 }
