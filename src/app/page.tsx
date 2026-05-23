@@ -1117,7 +1117,6 @@ export default function Home() {
             icon={<Network className={iconSize} />}
             label="Diagrama Relacional"
             onClick={() => setIsDiagramOpen(true)}
-            disabled={!activeConnection}
             variant="primary"
           />
           

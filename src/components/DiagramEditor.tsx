@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import Editor from '@monaco-editor/react';
+import { useAppStore } from '@/store/useAppStore';
 
 interface ColumnMetadata {
   tableName: string;
@@ -89,6 +90,13 @@ export default function DiagramEditor({
   activeConnection,
   showToast
 }: DiagramEditorProps) {
+  const { connections } = useAppStore();
+  const [selectedConnection, setSelectedConnection] = useState<any>(activeConnection);
+
+  useEffect(() => {
+    setSelectedConnection(activeConnection);
+  }, [activeConnection]);
+
   // Database tables states
   const [availableTables, setAvailableTables] = useState<string[]>([]);
   const [isLoadingTables, setIsLoadingTables] = useState(false);
@@ -151,7 +159,7 @@ export default function DiagramEditor({
 
   // Fetch available tables on open
   useEffect(() => {
-    if (!isOpen || !activeConnection) {
+    if (!isOpen || !selectedConnection) {
       setAvailableTables([]);
       return;
     }
@@ -162,7 +170,7 @@ export default function DiagramEditor({
         const res = await fetch('/api/oracle/objects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connection: activeConnection })
+          body: JSON.stringify({ connection: selectedConnection })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error al obtener tablas de la base de datos');
@@ -178,7 +186,7 @@ export default function DiagramEditor({
     };
 
     fetchAvailableTables();
-  }, [isOpen, activeConnection]);
+  }, [isOpen, selectedConnection]);
 
   // Fetch columns and relations when selected tables change
   useEffect(() => {
@@ -188,13 +196,17 @@ export default function DiagramEditor({
     }
 
     const fetchMetadata = async () => {
+      if (!selectedConnection) {
+        // Offline mode: do not fetch from DB, use whatever is already in tableData (loaded from JSON)
+        return;
+      }
       setIsLoadingMetadata(true);
       try {
         const res = await fetch('/api/oracle/table-metadata', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            connection: activeConnection,
+            connection: selectedConnection,
             tables: selectedTables
           })
         });
@@ -221,7 +233,7 @@ export default function DiagramEditor({
     };
 
     fetchMetadata();
-  }, [selectedTables, activeConnection]);
+  }, [selectedTables, selectedConnection]);
 
   // Handle table selection toggle
   const handleToggleTable = (tableName: string) => {
@@ -611,6 +623,27 @@ export default function DiagramEditor({
     showToast('Script guardado en archivo', 'success');
   };
 
+  const handleConnectionChange = (connectionId: string) => {
+    if (connectionId === 'offline') {
+      setSelectedConnection(null);
+      showToast('Cambiado a Modo Fuera de Línea', 'info');
+    } else {
+      const conn = connections.find(c => c.id === connectionId);
+      if (conn) {
+        setSelectedConnection(conn);
+        // Clear canvas metadata when switching connection to avoid mixing database schemas
+        setSelectedTables([]);
+        setNodes({});
+        setNotes([]);
+        setTableData({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [] });
+        setCommentsData({});
+        setShowComments({});
+        fetchedCommentsRef.current.clear();
+        showToast(`Cambiado a conexión: ${conn.name}`, 'success');
+      }
+    }
+  };
+
   // Keyboard listeners for Ctrl+A Select All
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -644,10 +677,11 @@ export default function DiagramEditor({
       pan,
       zoom,
       commentsData,
-      showComments
+      showComments,
+      tableData
     };
     const blob = new Blob([JSON.stringify(model, null, 2)], { type: 'application/json;charset=utf-8' });
-    saveAs(blob, `modelo_relacional_${activeConnection?.name || 'db'}.json`);
+    saveAs(blob, `modelo_relacional_${selectedConnection?.name || 'db'}.json`);
     showToast('Modelo relacional guardado', 'success');
   };
 
@@ -670,6 +704,11 @@ export default function DiagramEditor({
         if (!model.tables || !model.nodes) {
           throw new Error('Formato JSON de modelo inválido.');
         }
+
+        if (model.tableData) {
+          setTableData(model.tableData);
+        }
+
         setSelectedTables(model.tables);
         setNodes(model.nodes);
         if (model.title) setDiagramTitle(model.title);
@@ -747,6 +786,15 @@ export default function DiagramEditor({
 
   const fetchCommentsForTable = async (tableName: string) => {
     if (fetchedCommentsRef.current.has(tableName)) {
+      setShowComments(prev => ({
+        ...prev,
+        [tableName]: true
+      }));
+      return;
+    }
+
+    if (!activeConnection) {
+      // Offline mode: just show comments if already present in state
       setShowComments(prev => ({
         ...prev,
         [tableName]: true
@@ -996,9 +1044,26 @@ export default function DiagramEditor({
       }`}>
         <div className="flex items-center gap-2.5">
           <Database className="w-5 h-5 text-blue-500" />
-          <div>
+          <div className="flex flex-col">
             <h2 className="font-bold text-sm tracking-tight">Diseñador Relacional (ERD)</h2>
-            <p className="text-[10px] opacity-60">Conexión activa: {activeConnection?.name}</p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <select
+                value={selectedConnection?.id || 'offline'}
+                onChange={(e) => handleConnectionChange(e.target.value)}
+                className={`text-[10px] px-2 py-0.5 rounded border outline-none font-medium cursor-pointer ${
+                  isDark 
+                    ? 'bg-gray-950 border-gray-800 text-gray-300 focus:ring-1 focus:ring-blue-500' 
+                    : 'bg-gray-50 border-gray-300 text-gray-700 focus:ring-1 focus:ring-blue-500'
+                }`}
+              >
+                {connections.map(c => (
+                  <option key={c.id} value={c.id}>
+                    🔌 {c.name}
+                  </option>
+                ))}
+                <option value="offline">🌐 Fuera de línea</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -1104,7 +1169,13 @@ export default function DiagramEditor({
 
           {/* Table List Scrollable */}
           <div className="flex-1 overflow-y-auto p-2 space-y-0.5 custom-scrollbar">
-            {isLoadingTables ? (
+            {!selectedConnection ? (
+              <div className="text-center py-20 px-4 text-xs opacity-50 space-y-3">
+                <div className="text-2xl">🌐</div>
+                <p className="font-semibold">Modo Fuera de Línea</p>
+                <p className="text-[10px] leading-relaxed">Carga un archivo JSON para visualizar un modelo guardado o cambia de conexión arriba para trabajar con la base de datos.</p>
+              </div>
+            ) : isLoadingTables ? (
               <div className="flex flex-col items-center justify-center py-20 gap-2 opacity-60">
                 <span className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                 <span className="text-[10px]">Cargando tablas...</span>
@@ -1133,7 +1204,7 @@ export default function DiagramEditor({
                   );
                 })}
                 {filteredTables.length === 0 && (
-                  <div className="text-center py-10 text-xs opacity-40 italic">Ninguna tabla coincide</div>
+                  <div className="text-center py-10 text-xs opacity-40 italic font-mono">Ninguna tabla coincide</div>
                 )}
               </>
             )}
