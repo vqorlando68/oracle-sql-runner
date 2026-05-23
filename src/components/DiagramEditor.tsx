@@ -22,12 +22,22 @@ interface RelationMetadata {
   constraintName: string;
 }
 
+interface IndexMetadata {
+  tableName: string;
+  indexName: string;
+  uniqueness: string;
+  columnName: string;
+  columnPosition: number;
+  descend: string;
+}
+
 interface NodeState {
   x: number;
   y: number;
   width: number;
   height: number;
   color?: string;
+  indexesHeight?: number;
 }
 
 interface DiagramEditorProps {
@@ -65,7 +75,8 @@ export default function DiagramEditor({
   const [tableData, setTableData] = useState<{
     columns: ColumnMetadata[];
     relations: RelationMetadata[];
-  }>({ columns: [], relations: [] });
+    indexes: IndexMetadata[];
+  }>({ columns: [], relations: [], indexes: [] });
   
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
   const [tableSearch, setTableSearch] = useState('');
@@ -85,6 +96,11 @@ export default function DiagramEditor({
   const [resizingNodeId, setResizingNodeId] = useState<string | null>(null);
   const [initialResizeDims, setInitialResizeDims] = useState({ width: 0, height: 0 });
   const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 });
+  
+  // Resize indexes divider states
+  const [resizingIndexNodeId, setResizingIndexNodeId] = useState<string | null>(null);
+  const [initialIndexesHeight, setInitialIndexesHeight] = useState<number>(80);
+  const [resizeIndexStartPos, setResizeIndexStartPos] = useState({ y: 0 });
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -123,7 +139,7 @@ export default function DiagramEditor({
   // Fetch columns and relations when selected tables change
   useEffect(() => {
     if (selectedTables.length === 0) {
-      setTableData({ columns: [], relations: [] });
+      setTableData({ columns: [], relations: [], indexes: [] });
       return;
     }
 
@@ -143,7 +159,8 @@ export default function DiagramEditor({
         
         setTableData({
           columns: data.columns || [],
-          relations: data.relations || []
+          relations: data.relations || [],
+          indexes: data.indexes || []
         });
       } catch (err: any) {
         showToast(err.message, 'error');
@@ -235,11 +252,22 @@ export default function DiagramEditor({
 
   // Canvas Panning Logic
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if (draggingNodeId || resizingNodeId) return;
+    if (draggingNodeId || resizingNodeId || resizingIndexNodeId) return;
     setIsPanning(true);
     setPanStart({
       x: e.clientX - pan.x,
       y: e.clientY - pan.y
+    });
+  };
+
+  const handleIndexDividerMouseDown = (e: React.MouseEvent, tableName: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setResizingIndexNodeId(tableName);
+    const node = nodes[tableName];
+    setInitialIndexesHeight(node.indexesHeight || 80);
+    setResizeIndexStartPos({
+      y: e.clientY
     });
   };
 
@@ -272,6 +300,18 @@ export default function DiagramEditor({
           height: Math.max(120, initialResizeDims.height + dy)
         }
       }));
+    } else if (resizingIndexNodeId) {
+      const dy = (e.clientY - resizeIndexStartPos.y) / zoom;
+      const node = nodes[resizingIndexNodeId];
+      const maxIdxHeight = node.height - 40 - 50; // Header is 40, cols need at least 50
+      const newHeight = Math.max(30, Math.min(maxIdxHeight, initialIndexesHeight - dy));
+      setNodes(prev => ({
+        ...prev,
+        [resizingIndexNodeId]: {
+          ...prev[resizingIndexNodeId],
+          indexesHeight: newHeight
+        }
+      }));
     }
   };
 
@@ -279,6 +319,7 @@ export default function DiagramEditor({
     setIsPanning(false);
     setDraggingNodeId(null);
     setResizingNodeId(null);
+    setResizingIndexNodeId(null);
   };
 
   // Zooming Logic
@@ -765,8 +806,23 @@ export default function DiagramEditor({
               const node = nodes[t];
               if (!node) return null;
 
-              // Filter columns for this specific table
+              // Filter columns and indexes for this specific table
               const cols = tableData.columns.filter(c => c.tableName === t);
+              const tableIndexes = (tableData.indexes || []).filter(idx => idx.tableName === t);
+              
+              // Group indexes by indexName
+              const indexGroups: Record<string, { name: string; uniqueness: string; columns: string[] }> = {};
+              tableIndexes.forEach(idx => {
+                if (!indexGroups[idx.indexName]) {
+                  indexGroups[idx.indexName] = {
+                    name: idx.indexName,
+                    uniqueness: idx.uniqueness,
+                    columns: []
+                  };
+                }
+                indexGroups[idx.indexName].columns.push(idx.columnName);
+              });
+              const groupedIndexes = Object.values(indexGroups);
               
               // Define dynamic styling based on color
               const headerColor = node.color || '#3b82f6';
@@ -857,6 +913,53 @@ export default function DiagramEditor({
                       </div>
                     )}
                   </div>
+
+                  {/* Resizable Indexes Divider */}
+                  {groupedIndexes.length > 0 && (
+                    <div
+                      onMouseDown={(e) => handleIndexDividerMouseDown(e, t)}
+                      className="h-1 bg-gray-200 dark:bg-gray-800 hover:bg-blue-500 dark:hover:bg-blue-500 cursor-ns-resize transition-colors shrink-0 flex items-center justify-center group/divider"
+                      title="Arrastra para ajustar el alto de la sección de Índices"
+                    >
+                      <div className="w-8 h-0.5 rounded-full bg-gray-400/40 group-hover/divider:bg-white" />
+                    </div>
+                  )}
+
+                  {/* Indexes List */}
+                  {groupedIndexes.length > 0 && (
+                    <div 
+                      style={{ height: `${node.indexesHeight || 80}px` }}
+                      className="shrink-0 flex flex-col bg-black/5 dark:bg-white/5 border-inherit"
+                    >
+                      <div className="px-2 pt-1 pb-0.5 text-[9px] font-bold tracking-wider uppercase opacity-55">
+                        Índices
+                      </div>
+                      <div className="flex-1 px-1.5 pb-2 space-y-1 text-[9px] font-mono overflow-y-auto custom-scrollbar">
+                        {groupedIndexes.map(idx => {
+                          const isUnique = idx.uniqueness === 'UNIQUE';
+                          return (
+                            <div key={idx.name} className="flex flex-col px-1.5 py-1 rounded bg-black/10 dark:bg-white/5 border border-black/5 dark:border-white/5">
+                              <div className="flex items-center justify-between gap-1 select-text">
+                                <span className="font-bold truncate opacity-80 text-blue-500 dark:text-blue-400 max-w-[70%]" title={idx.name}>
+                                  {idx.name}
+                                </span>
+                                <span className={`text-[8px] px-1 rounded-sm ${
+                                  isUnique 
+                                    ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' 
+                                    : 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
+                                }`}>
+                                  {isUnique ? 'UNIQUE' : 'NON-UNIQUE'}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 opacity-60 truncate">
+                                ({idx.columns.join(', ')})
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Resize handle (bottom right corner) */}
                   <div

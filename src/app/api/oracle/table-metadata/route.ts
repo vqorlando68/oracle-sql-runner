@@ -46,6 +46,25 @@ export async function POST(req: Request) {
     `;
     const relsResult = await executeOracleQuery(connection, relsSql, binds);
 
+    // 3. Fetch indexes for selected tables
+    const indexesSql = `
+      SELECT 
+          i.table_name,
+          i.index_name,
+          i.uniqueness,
+          ic.column_name,
+          ic.column_position,
+          ic.descend
+      FROM 
+          user_indexes i
+          JOIN user_ind_columns ic ON i.index_name = ic.index_name AND i.table_name = ic.table_name
+      WHERE 
+          i.table_name IN (${bindPlaceholders})
+      ORDER BY 
+          i.table_name, i.index_name, ic.column_position
+    `;
+    const indexesResult = await executeOracleQuery(connection, indexesSql, binds);
+
     // Normalize property keys for compatibility (uppercase/lowercase)
     const columns = (colsResult.rows || []).map((row: any) => ({
       tableName: row.TABLE_NAME || row.table_name,
@@ -62,7 +81,16 @@ export async function POST(req: Request) {
       constraintName: row.CONSTRAINT_NAME || row.constraint_name
     }));
 
-    return NextResponse.json({ success: true, columns, relations });
+    const indexes = (indexesResult.rows || []).map((row: any) => ({
+      tableName: row.TABLE_NAME || row.table_name,
+      indexName: row.INDEX_NAME || row.index_name,
+      uniqueness: row.UNIQUENESS || row.uniqueness,
+      columnName: row.COLUMN_NAME || row.column_name,
+      columnPosition: row.COLUMN_POSITION || row.column_position,
+      descend: row.DESCEND || row.descend
+    }));
+
+    return NextResponse.json({ success: true, columns, relations, indexes });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || 'Error fetching table metadata' },
