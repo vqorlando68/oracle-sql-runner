@@ -103,15 +103,28 @@ export default function ResultsTable({ data, columns, sql }: Props) {
         return (
           <div className="flex justify-between items-center group gap-2">
             <span className={`truncate inline-block`} style={{ maxWidth: truncateLimit * 8 + 'px' }}>{truncatedVal}</span>
-            {isLong && (
+            <div className="flex items-center gap-1 shrink-0">
               <button 
-                onClick={() => setCellModal({ isOpen: true, content: displayVal, colName: col })}
-                className="opacity-0 group-hover:opacity-100 p-1 bg-blue-500/10 text-blue-500 rounded hover:bg-blue-500/20 transition-opacity"
-                title="View full content"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigator.clipboard.writeText(displayVal);
+                  showToast('Copiado al portapapeles', 'success');
+                }}
+                className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-500/10 rounded transition-all"
+                title="Copiar al portapapeles"
               >
-                <Maximize2 className="w-3.5 h-3.5" />
+                <Copy className="w-3.5 h-3.5" />
               </button>
-            )}
+              {isLong && (
+                <button 
+                  onClick={() => setCellModal({ isOpen: true, content: displayVal, colName: col })}
+                  className="opacity-0 group-hover:opacity-100 p-1 bg-blue-500/10 text-blue-500 rounded hover:bg-blue-500/20 transition-opacity"
+                  title="Ver contenido completo"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         );
       }
@@ -359,9 +372,25 @@ export default function ResultsTable({ data, columns, sql }: Props) {
           <div className={`w-full max-w-4xl max-h-[90vh] flex flex-col rounded-xl shadow-2xl ${isDark ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'} border`}>
             <div className={`p-4 border-b flex justify-between items-center ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
               <h3 className="font-bold">Column: {cellModal.colName}</h3>
-              <button onClick={() => setCellModal({ isOpen: false, content: '', colName: '' })} className="p-1 rounded-md hover:bg-black/10">
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(cellModal.content);
+                    showToast('Copiado al portapapeles', 'success');
+                  }}
+                  className={`p-1.5 rounded-md border flex items-center gap-1.5 text-xs font-semibold transition-all ${
+                    isDark 
+                      ? 'border-gray-700 hover:bg-gray-800 text-gray-300 hover:text-white' 
+                      : 'border-gray-300 hover:bg-gray-100 text-gray-600 hover:text-gray-900'
+                  }`}
+                  title="Copiar contenido completo"
+                >
+                  <Copy className="w-4 h-4" /> Copiar contenido
+                </button>
+                <button onClick={() => setCellModal({ isOpen: false, content: '', colName: '' })} className="p-1.5 rounded-md hover:bg-black/10">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             <div className="p-4 flex-1 overflow-auto custom-scrollbar">
               <pre className="text-sm whitespace-pre-wrap font-mono break-all">
