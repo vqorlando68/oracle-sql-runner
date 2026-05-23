@@ -54,6 +54,27 @@ interface ConstraintMetadata {
   searchCondition: string | null;
 }
 
+interface DiagramTab {
+  id: string;
+  title: string;
+  selectedConnection: any;
+  selectedTables: string[];
+  nodes: Record<string, NodeState>;
+  tableData: {
+    columns: ColumnMetadata[];
+    relations: RelationMetadata[];
+    indexes: IndexMetadata[];
+    primaryKeys: PrimaryKeyMetadata[];
+    triggers: TriggerMetadata[];
+    constraints: ConstraintMetadata[];
+  };
+  notes: NoteState[];
+  commentsData: Record<string, { tableComment?: string; columns: Record<string, string> }>;
+  showComments: Record<string, boolean>;
+  pan: { x: number; y: number };
+  zoom: number;
+}
+
 interface NodeState {
   x: number;
   y: number;
@@ -101,9 +122,10 @@ export default function DiagramEditor({
   const { connections } = useAppStore();
   const [selectedConnection, setSelectedConnection] = useState<any>(activeConnection);
 
-  useEffect(() => {
-    setSelectedConnection(activeConnection);
-  }, [activeConnection]);
+  // Tabs management states
+  const [diagramTabs, setDiagramTabs] = useState<DiagramTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string>('');
+  const [tabToClose, setTabToClose] = useState<string | null>(null);
 
   // Database tables states
   const [availableTables, setAvailableTables] = useState<string[]>([]);
@@ -165,6 +187,48 @@ export default function DiagramEditor({
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Initialize first tab when diagram opens
+  useEffect(() => {
+    if (isOpen && diagramTabs.length === 0) {
+      const initialTabId = crypto.randomUUID();
+      const initialTab: DiagramTab = {
+        id: initialTabId,
+        title: 'Modelo 1',
+        selectedConnection: activeConnection,
+        selectedTables: [],
+        nodes: {},
+        tableData: { columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] },
+        notes: [],
+        commentsData: {},
+        showComments: {},
+        pan: { x: 0, y: 0 },
+        zoom: 1.0
+      };
+      setDiagramTabs([initialTab]);
+      setActiveTabId(initialTabId);
+      
+      // Load initial state into active local states
+      setDiagramTitle(initialTab.title);
+      setSelectedConnection(initialTab.selectedConnection);
+      setSelectedTables([]);
+      setNodes({});
+      setTableData({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] });
+      setNotes([]);
+      setCommentsData({});
+      setShowComments({});
+      setPan({ x: 0, y: 0 });
+      setZoom(1.0);
+      setActiveSelectedNodes([]);
+      fetchedCommentsRef.current.clear();
+    }
+  }, [isOpen, activeConnection, diagramTabs.length]);
+
+  // Synchronize canvas title text field with active tab's title in tabs list
+  useEffect(() => {
+    if (!activeTabId) return;
+    setDiagramTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, title: diagramTitle } : t));
+  }, [diagramTitle, activeTabId]);
 
   // Fetch available tables on open
   useEffect(() => {
@@ -747,6 +811,192 @@ export default function DiagramEditor({
     showToast('Script guardado en archivo', 'success');
   };
 
+  const handleSwitchTab = (targetTabId: string) => {
+    if (targetTabId === activeTabId) return;
+    
+    // Save current active tab state
+    setDiagramTabs(prev => {
+      const updated = prev.map(t => {
+        if (t.id === activeTabId) {
+          return {
+            ...t,
+            title: diagramTitle,
+            selectedConnection,
+            selectedTables,
+            nodes,
+            tableData,
+            notes,
+            commentsData,
+            showComments,
+            pan,
+            zoom
+          };
+        }
+        return t;
+      });
+
+      // Find target tab
+      const targetTab = updated.find(t => t.id === targetTabId);
+      if (targetTab) {
+        // Load target state
+        setDiagramTitle(targetTab.title);
+        setSelectedConnection(targetTab.selectedConnection);
+        setSelectedTables(targetTab.selectedTables);
+        setNodes(targetTab.nodes);
+        setTableData(targetTab.tableData);
+        setNotes(targetTab.notes);
+        setCommentsData(targetTab.commentsData);
+        setShowComments(targetTab.showComments);
+        setPan(targetTab.pan);
+        setZoom(targetTab.zoom);
+        setActiveSelectedNodes([]);
+        
+        // Repopulate fetched comments ref cache
+        fetchedCommentsRef.current.clear();
+        Object.keys(targetTab.commentsData).forEach(k => fetchedCommentsRef.current.add(k));
+      }
+
+      return updated;
+    });
+
+    setActiveTabId(targetTabId);
+  };
+
+  const handleAddTab = () => {
+    // Save current active tab state first
+    setDiagramTabs(prev => {
+      const updated = prev.map(t => {
+        if (t.id === activeTabId) {
+          return {
+            ...t,
+            title: diagramTitle,
+            selectedConnection,
+            selectedTables,
+            nodes,
+            tableData,
+            notes,
+            commentsData,
+            showComments,
+            pan,
+            zoom
+          };
+        }
+        return t;
+      });
+
+      const newTabId = crypto.randomUUID();
+      const newTab: DiagramTab = {
+        id: newTabId,
+        title: `Modelo ${updated.length + 1}`,
+        selectedConnection: activeConnection, // use parent's active database connection by default
+        selectedTables: [],
+        nodes: {},
+        tableData: { columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] },
+        notes: [],
+        commentsData: {},
+        showComments: {},
+        pan: { x: 0, y: 0 },
+        zoom: 1.0
+      };
+
+      // Load new tab blank state
+      setDiagramTitle(newTab.title);
+      setSelectedConnection(newTab.selectedConnection);
+      setSelectedTables([]);
+      setNodes({});
+      setTableData({ columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] });
+      setNotes([]);
+      setCommentsData({});
+      setShowComments({});
+      setPan({ x: 0, y: 0 });
+      setZoom(1.0);
+      setActiveSelectedNodes([]);
+      fetchedCommentsRef.current.clear();
+
+      setActiveTabId(newTabId);
+      return [...updated, newTab];
+    });
+  };
+
+  const saveTabJson = (tabToSave: DiagramTab) => {
+    const model = {
+      title: tabToSave.id === activeTabId ? diagramTitle : tabToSave.title,
+      tables: tabToSave.id === activeTabId ? selectedTables : tabToSave.selectedTables,
+      nodes: tabToSave.id === activeTabId ? nodes : tabToSave.nodes,
+      notes: tabToSave.id === activeTabId ? notes : tabToSave.notes,
+      pan: tabToSave.id === activeTabId ? pan : tabToSave.pan,
+      zoom: tabToSave.id === activeTabId ? zoom : tabToSave.zoom,
+      commentsData: tabToSave.id === activeTabId ? commentsData : tabToSave.commentsData,
+      showComments: tabToSave.id === activeTabId ? showComments : tabToSave.showComments,
+      tableData: tabToSave.id === activeTabId ? tableData : tabToSave.tableData,
+      savedConnection: (tabToSave.id === activeTabId ? selectedConnection : tabToSave.selectedConnection)
+        ? {
+            name: (tabToSave.id === activeTabId ? selectedConnection : tabToSave.selectedConnection).name,
+            user: (tabToSave.id === activeTabId ? selectedConnection : tabToSave.selectedConnection).user,
+            host: (tabToSave.id === activeTabId ? selectedConnection : tabToSave.selectedConnection).host,
+            port: (tabToSave.id === activeTabId ? selectedConnection : tabToSave.selectedConnection).port,
+            serviceName: (tabToSave.id === activeTabId ? selectedConnection : tabToSave.selectedConnection).serviceName
+          }
+        : 'Fuera de Línea'
+    };
+    const blob = new Blob([JSON.stringify(model, null, 2)], { type: 'application/json;charset=utf-8' });
+    saveAs(blob, `modelo_relacional_${model.title.replace(/\s+/g, '_')}.json`);
+    showToast(`Modelo '${model.title}' guardado`, 'success');
+  };
+
+  const performCloseTab = (tabId: string) => {
+    setDiagramTabs(prev => {
+      const filtered = prev.filter(t => t.id !== tabId);
+      
+      // If we closed the active tab, switch to another one
+      if (tabId === activeTabId) {
+        const nextActiveTab = filtered[0];
+        setActiveTabId(nextActiveTab.id);
+        
+        // Load its state
+        setDiagramTitle(nextActiveTab.title);
+        setSelectedConnection(nextActiveTab.selectedConnection);
+        setSelectedTables(nextActiveTab.selectedTables);
+        setNodes(nextActiveTab.nodes);
+        setTableData(nextActiveTab.tableData);
+        setNotes(nextActiveTab.notes);
+        setCommentsData(nextActiveTab.commentsData);
+        setShowComments(nextActiveTab.showComments);
+        setPan(nextActiveTab.pan);
+        setZoom(nextActiveTab.zoom);
+        setActiveSelectedNodes([]);
+        
+        fetchedCommentsRef.current.clear();
+        Object.keys(nextActiveTab.commentsData).forEach(k => fetchedCommentsRef.current.add(k));
+      }
+      
+      return filtered;
+    });
+    setTabToClose(null);
+  };
+
+  const handleCloseTab = (tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    if (diagramTabs.length === 1) {
+      showToast('Debe haber al menos un modelo activo.', 'info');
+      return;
+    }
+
+    const tab = diagramTabs.find(t => t.id === tabId);
+    if (!tab) return;
+
+    const hasContent = tabId === activeTabId
+      ? (selectedTables.length > 0 || notes.length > 0)
+      : (tab.selectedTables.length > 0 || tab.notes.length > 0);
+
+    if (hasContent) {
+      setTabToClose(tabId);
+    } else {
+      performCloseTab(tabId);
+    }
+  };
+
   const handleConnectionChange = (connectionId: string) => {
     if (connectionId === 'offline') {
       setSelectedConnection(null);
@@ -838,13 +1088,8 @@ export default function DiagramEditor({
           throw new Error('Formato JSON de modelo inválido.');
         }
 
-        if (model.tableData) {
-          setTableData(model.tableData);
-        }
-
-        setSelectedTables(model.tables);
-        setNodes(model.nodes);
-        if (model.title) setDiagramTitle(model.title);
+        const newTabId = crypto.randomUUID();
+        const loadedTitle = model.title || 'Modelo Cargado';
 
         let updatedNotes = model.notes ? [...model.notes] : [];
         if (model.savedConnection) {
@@ -870,33 +1115,81 @@ export default function DiagramEditor({
             color: '#bfdbfe' // blue info sticky note
           });
         }
-        setNotes(updatedNotes);
 
-        if (model.pan) setPan(model.pan);
-        if (model.zoom) setZoom(model.zoom);
-
-        fetchedCommentsRef.current.clear();
-        if (model.commentsData) {
-          setCommentsData(model.commentsData);
-          Object.keys(model.commentsData).forEach(t => fetchedCommentsRef.current.add(t));
-        } else {
-          setCommentsData({});
-        }
-
-        if (model.showComments) {
-          setShowComments(model.showComments);
-        } else {
-          setShowComments({});
-        }
-
-        // Fetch comments for tables in model if they aren't loaded
-        model.tables.forEach((t: string) => {
-          if (!model.commentsData || !model.commentsData[t]) {
-            fetchCommentsForTable(t);
+        let tabConnection: any = null;
+        if (typeof model.savedConnection === 'object' && model.savedConnection !== null) {
+          const matchedConn = connections.find(c => c.name === model.savedConnection.name || c.host === model.savedConnection.host);
+          if (matchedConn) {
+            tabConnection = matchedConn;
           }
+        }
+
+        const newTab: DiagramTab = {
+          id: newTabId,
+          title: loadedTitle,
+          selectedConnection: tabConnection,
+          selectedTables: model.tables,
+          nodes: model.nodes,
+          tableData: model.tableData || { columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] },
+          notes: updatedNotes,
+          commentsData: model.commentsData || {},
+          showComments: model.showComments || {},
+          pan: model.pan || { x: 0, y: 0 },
+          zoom: model.zoom || 1.0
+        };
+
+        // Save active first, then append new loaded tab
+        setDiagramTabs(prev => {
+          const updated = prev.map(t => {
+            if (t.id === activeTabId) {
+              return {
+                ...t,
+                title: diagramTitle,
+                selectedConnection,
+                selectedTables,
+                nodes,
+                tableData,
+                notes,
+                commentsData,
+                showComments,
+                pan,
+                zoom
+              };
+            }
+            return t;
+          });
+
+          // Load the new tab's state
+          setDiagramTitle(newTab.title);
+          setSelectedConnection(newTab.selectedConnection);
+          setSelectedTables(newTab.selectedTables);
+          setNodes(newTab.nodes);
+          setTableData(newTab.tableData);
+          setNotes(newTab.notes);
+          setCommentsData(newTab.commentsData);
+          setShowComments(newTab.showComments);
+          setPan(newTab.pan);
+          setZoom(newTab.zoom);
+          setActiveSelectedNodes([]);
+
+          fetchedCommentsRef.current.clear();
+          Object.keys(newTab.commentsData).forEach(t => fetchedCommentsRef.current.add(t));
+
+          return [...updated, newTab];
         });
 
-        showToast('Modelo relacional cargado correctamente', 'success');
+        setActiveTabId(newTabId);
+
+        // Fetch comments for tables in model if they aren't loaded and we have connection
+        if (tabConnection) {
+          model.tables.forEach((t: string) => {
+            if (!model.commentsData || !model.commentsData[t]) {
+              fetchCommentsForTable(t);
+            }
+          });
+        }
+
+        showToast(`Modelo '${loadedTitle}' cargado en una nueva pestaña`, 'success');
       } catch (err: any) {
         showToast(`Error al cargar JSON: ${err.message}`, 'error');
       }
@@ -1288,6 +1581,72 @@ export default function DiagramEditor({
             <X className="w-5 h-5" />
           </button>
         </div>
+      </div>
+
+      {/* ── Tabs Bar ────────────────────────────────────────────────────── */}
+      <div className={`h-10 border-b flex items-center px-4 gap-1.5 overflow-x-auto shrink-0 scrollbar-none ${
+        isDark ? 'border-gray-800 bg-gray-900/40' : 'border-gray-250 bg-gray-50/50'
+      }`}>
+        {diagramTabs.map(tab => {
+          const isActive = tab.id === activeTabId;
+          const connName = tab.selectedConnection ? tab.selectedConnection.name : 'Fuera de Línea';
+          const isOffline = !tab.selectedConnection;
+
+          return (
+            <div
+              key={tab.id}
+              onClick={() => handleSwitchTab(tab.id)}
+              className={`h-8 px-3 rounded-lg flex items-center gap-2 text-xs font-semibold cursor-pointer border transition-all select-none ${
+                isActive
+                  ? (isDark 
+                      ? 'bg-gray-800 border-gray-700 text-white shadow shadow-black/10' 
+                      : 'bg-white border-gray-200 text-gray-900 shadow-sm shadow-gray-200/50')
+                  : (isDark
+                      ? 'bg-transparent border-transparent text-gray-400 hover:text-gray-250 hover:bg-gray-800/30'
+                      : 'bg-transparent border-transparent text-gray-500 hover:text-gray-800 hover:bg-gray-100/50')
+              }`}
+            >
+              {/* Connection Status Icon/Dot */}
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                isOffline ? 'bg-gray-500' : 'bg-green-500 animate-pulse'
+              }`} />
+              
+              {/* Tab Title */}
+              <span className="truncate max-w-[120px]">{isActive ? diagramTitle : tab.title}</span>
+
+              {/* Small connection details badge */}
+              <span className={`text-[9px] font-normal px-1 py-0.5 rounded ${
+                isDark ? 'bg-gray-950/40 text-gray-500' : 'bg-gray-100 text-gray-450'
+              }`}>
+                {connName}
+              </span>
+
+              {/* Close Button */}
+              <button
+                onClick={(e) => handleCloseTab(tab.id, e)}
+                className={`p-0.5 rounded-full transition-colors hover:bg-black/15 dark:hover:bg-white/10 ${
+                  isActive ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-300'
+                }`}
+                title="Cerrar modelo"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Add Tab Button */}
+        <button
+          onClick={handleAddTab}
+          className={`p-1 rounded-lg transition-colors border ${
+            isDark 
+              ? 'border-gray-800 hover:bg-gray-800 text-gray-450 hover:text-gray-200' 
+              : 'border-gray-200 hover:bg-gray-100 text-gray-500 hover:text-gray-850'
+          }`}
+          title="Nuevo modelo relacional"
+        >
+          <Plus className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* ── Main Content Area (Sidebar + Canvas) ─────────────────────────── */}
@@ -1835,6 +2194,55 @@ export default function DiagramEditor({
                 className="py-2 px-5 rounded-xl text-sm bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-colors flex items-center gap-1.5 shadow-lg shadow-blue-500/10 hover:shadow-blue-500/20"
               >
                 <Check className="w-4 h-4" /> Copiar Código
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab Close Confirmation Modal */}
+      {tabToClose && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fade-in pointer-events-auto">
+          <div 
+            className={`w-full max-w-md rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 ${
+              isDark ? 'bg-gray-900 border-gray-800 text-gray-200 shadow-black/80' : 'bg-white border-gray-200 text-gray-800 shadow-gray-400/30'
+            }`}
+          >
+            <div className="flex items-center gap-3 text-amber-500">
+              <HelpCircle className="w-6 h-6" />
+              <h3 className="font-bold text-base">Guardar cambios antes de cerrar</h3>
+            </div>
+            
+            <p className="text-xs opacity-80 leading-relaxed">
+              El modelo <strong>{diagramTabs.find(t => t.id === tabToClose)?.title}</strong> contiene elementos en el lienzo. ¿Deseas guardar los cambios en un archivo JSON antes de cerrar esta pestaña?
+            </p>
+
+            <div className="flex gap-2 justify-end pt-2">
+              <button
+                onClick={() => setTabToClose(null)}
+                className={`py-2 px-4 rounded-xl text-xs border font-semibold transition-colors ${
+                  isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-650'
+                }`}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => performCloseTab(tabToClose)}
+                className="py-2 px-4 rounded-xl text-xs bg-red-600 hover:bg-red-500 text-white font-semibold transition-colors border border-transparent shadow-md"
+              >
+                Cerrar sin Guardar
+              </button>
+              <button
+                onClick={() => {
+                  const targetTab = diagramTabs.find(t => t.id === tabToClose);
+                  if (targetTab) {
+                    saveTabJson(targetTab);
+                    performCloseTab(tabToClose);
+                  }
+                }}
+                className="py-2 px-4 rounded-xl text-xs bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-colors border border-transparent shadow-md shadow-blue-500/10"
+              >
+                Guardar y Cerrar
               </button>
             </div>
           </div>
