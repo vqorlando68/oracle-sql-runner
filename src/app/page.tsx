@@ -1471,7 +1471,7 @@ export default function Home() {
                         <div
                           key={tbl}
                           onClick={() => setMetadataTable(tbl)}
-                          onDoubleClick={() => insertTextAtCursor(tbl)}
+                          onDoubleClick={() => insertTextAtCursor(tbl.toLowerCase())}
                           className={`px-1.5 py-1 rounded text-[11px] font-mono cursor-pointer transition-colors truncate select-none ${
                             metadataTable === tbl
                               ? (isDark ? 'bg-blue-500/15 text-blue-400 font-semibold' : 'bg-blue-50 text-blue-600 font-semibold')
@@ -1508,7 +1508,7 @@ export default function Home() {
                       metadataColumns.map(col => (
                         <div
                           key={col.columnName}
-                          onClick={() => insertTextAtCursor(col.columnName)}
+                          onClick={() => insertTextAtCursor(col.columnName.toLowerCase())}
                           className={`px-1.5 py-1 rounded text-[11px] font-mono cursor-pointer transition-colors flex justify-between items-center ${
                             isDark ? 'hover:bg-gray-900 text-gray-350' : 'hover:bg-gray-100 text-gray-700'
                           }`}
