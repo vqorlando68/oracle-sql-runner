@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   X, Plus, Minus, Maximize2, Download, Upload, Trash2, 
-  Settings, Database, HelpCircle, Columns, RefreshCw, ZoomIn, ZoomOut, Check
+  Settings, Database, HelpCircle, Columns, RefreshCw, ZoomIn, ZoomOut, Check,
+  MessageSquare
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 
@@ -94,6 +95,11 @@ export default function DiagramEditor({
   
   const [diagramTitle, setDiagramTitle] = useState<string>('Modelo Relacional Activo');
   const [notes, setNotes] = useState<NoteState[]>([]);
+
+  // Comments states
+  const [commentsData, setCommentsData] = useState<Record<string, { tableComment?: string; columns: Record<string, string> }>>({});
+  const [showComments, setShowComments] = useState<Record<string, boolean>>({});
+  const [loadingComments, setLoadingComments] = useState<Record<string, boolean>>({});
   
   // Navigation states (Zoom & Pan)
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -229,6 +235,7 @@ export default function DiagramEditor({
   const handleClearAll = () => {
     setSelectedTables([]);
     setNodes({});
+    setNotes([]);
     showToast('Lienzo limpiado', 'info');
   };
 
@@ -498,6 +505,54 @@ export default function DiagramEditor({
     };
     setNotes(prev => [...prev, newNote]);
     showToast('Nota agregada al lienzo', 'info');
+  };
+
+  const handleToggleComments = async (tableName: string) => {
+    // If comments are already loaded, just toggle visibility
+    if (commentsData[tableName]) {
+      setShowComments(prev => ({
+        ...prev,
+        [tableName]: !prev[tableName]
+      }));
+      return;
+    }
+
+    // Otherwise, fetch comments from DB
+    setLoadingComments(prev => ({ ...prev, [tableName]: true }));
+    try {
+      const res = await fetch('/api/oracle/table-comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          tableName
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al cargar comentarios');
+
+      const colMap: Record<string, string> = {};
+      (data.columnComments || []).forEach((c: any) => {
+        colMap[c.columnName] = c.comment;
+      });
+
+      setCommentsData(prev => ({
+        ...prev,
+        [tableName]: {
+          tableComment: data.tableComment || '',
+          columns: colMap
+        }
+      }));
+
+      setShowComments(prev => ({
+        ...prev,
+        [tableName]: true
+      }));
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setLoadingComments(prev => ({ ...prev, [tableName]: false }));
+    }
   };
 
   // Filtered available tables list
@@ -985,6 +1040,19 @@ export default function DiagramEditor({
                         ))}
                       </div>
 
+                      {/* Toggle comments button */}
+                      <button 
+                        onClick={() => handleToggleComments(t)}
+                        className="p-1 hover:bg-black/10 rounded mr-0.5" 
+                        title={showComments[t] ? "Ocultar Comentarios" : "Mostrar Comentarios"}
+                      >
+                        {loadingComments[t] ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <MessageSquare className={`w-3 h-3 ${showComments[t] ? 'text-yellow-300 fill-yellow-300 font-bold' : ''}`} />
+                        )}
+                      </button>
+
                       <button 
                         onClick={() => handleToggleTable(t)}
                         className="p-1 hover:bg-black/10 rounded" 
@@ -995,6 +1063,17 @@ export default function DiagramEditor({
                     </div>
                   </div>
 
+                  {/* Table Comment if visible */}
+                  {showComments[t] && commentsData[t]?.tableComment && (
+                    <div className={`px-3 py-1.5 text-[9px] italic border-b opacity-85 leading-normal shrink-0 ${
+                      isDark 
+                        ? 'bg-blue-500/10 border-gray-805 text-blue-300' 
+                        : 'bg-blue-50 border-gray-150 text-blue-800'
+                    }`}>
+                      📝 {commentsData[t].tableComment}
+                    </div>
+                  )}
+
                   {/* Columns List Scrollable */}
                   <div className="flex-1 overflow-y-auto p-1.5 space-y-1 custom-scrollbar text-[10px]">
                     {cols.length > 0 ? (
@@ -1004,22 +1083,34 @@ export default function DiagramEditor({
                         const isPk = c.columnName.toUpperCase() === 'ID' || c.columnName.toUpperCase().endsWith('_ID');
                         const isColHighlighted = isColumnInHoveredRelation(t, c.columnName);
                         
+                        const colComment = showComments[t] ? commentsData[t]?.columns[c.columnName] : null;
+                        
                         return (
                           <div 
                             key={c.columnName}
-                            className={`flex items-center justify-between px-2 py-1 rounded transition-all duration-150 ${
-                              isColHighlighted
-                                ? (isDark ? 'bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30' : 'bg-amber-100 text-amber-800 font-bold border border-amber-300')
-                                : (isDark ? 'hover:bg-gray-800/40 text-gray-300' : 'hover:bg-gray-100 text-gray-700')
-                            }`}
+                            className="flex flex-col border-b border-black/5 dark:border-white/5 py-0.5"
                           >
-                            <span className={`font-mono flex items-center gap-1 truncate ${isPk ? 'font-bold text-yellow-500' : ''}`}>
-                              {isPk && <span className="text-[8px]">🔑</span>}
-                              {c.columnName}
-                            </span>
-                            <span className="font-mono text-[9px] opacity-50 shrink-0 ml-1.5">
-                              {c.dataType.toLowerCase()}{!isNullable && '*'}
-                            </span>
+                            <div 
+                              className={`flex items-center justify-between px-2 py-0.5 rounded transition-all duration-150 ${
+                                isColHighlighted
+                                  ? (isDark ? 'bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30' : 'bg-amber-100 text-amber-800 font-bold border border-amber-300')
+                                  : (isDark ? 'hover:bg-gray-800/40 text-gray-300' : 'hover:bg-gray-100 text-gray-700')
+                              }`}
+                            >
+                              <span className={`font-mono flex items-center gap-1 truncate ${isPk ? 'font-bold text-yellow-500' : ''}`}>
+                                {isPk && <span className="text-[8px]">🔑</span>}
+                                {c.columnName}
+                              </span>
+                              <span className="font-mono text-[9px] opacity-50 shrink-0 ml-1.5">
+                                {c.dataType.toLowerCase()}{!isNullable && '*'}
+                              </span>
+                            </div>
+                            {/* Column Comment */}
+                            {colComment && (
+                              <div className="px-2 pt-0.5 text-[9px] text-gray-500 dark:text-gray-400 italic break-words leading-tight">
+                                ↳ {colComment}
+                              </div>
+                            )}
                           </div>
                         );
                       })
