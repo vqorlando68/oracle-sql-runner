@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import Sidebar from '@/components/Sidebar';
 import ParamModal from '@/components/ParamModal';
@@ -17,7 +17,7 @@ import {
   Play, PlayCircle, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle,
   Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus,
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
-  Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare
+  Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare, Eye, EyeOff
 } from 'lucide-react';
 import { ExecResult } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
@@ -149,6 +149,19 @@ export default function Home() {
   const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
   const [isDiagramOpen, setIsDiagramOpen] = useState(false);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
+
+  // Metadata Right Panel States
+  const [showMetadataPanel, setShowMetadataPanel] = useState(true);
+  const [metadataSchema, setMetadataSchema] = useState<string>('');
+  const [metadataSchemas, setMetadataSchemas] = useState<string[]>([]);
+  const [isLoadingMetadataSchemas, setIsLoadingMetadataSchemas] = useState(false);
+  const [metadataTable, setMetadataTable] = useState<string>('');
+  const [metadataTables, setMetadataTables] = useState<string[]>([]);
+  const [isLoadingMetadataTables, setIsLoadingMetadataTables] = useState(false);
+  const [tableSearch, setTableSearch] = useState<string>('');
+  const [metadataColumns, setMetadataColumns] = useState<{columnName: string, dataType: string, nullable: boolean}[]>([]);
+  const [isLoadingMetadataColumns, setIsLoadingMetadataColumns] = useState(false);
+
   // Save modal: 'overwrite' = confirm overwrite existing fav | 'new' = create new fav
   const [saveModal, setSaveModal] = useState<'overwrite' | 'new' | null>(null);
 
@@ -246,6 +259,149 @@ export default function Home() {
   const activeFavorite = activeTab?.favoriteId
     ? favorites.find(f => f.id === activeTab.favoriteId)
     : null;
+
+  // Insert text into the editor at the cursor position
+  const insertTextAtCursor = (text: string) => {
+    if (editorRef.current && monacoRef.current) {
+      const editor = editorRef.current;
+      const selection = editor.getSelection();
+      const range = new monacoRef.current.Range(
+        selection.startLineNumber,
+        selection.startColumn,
+        selection.endLineNumber,
+        selection.endColumn
+      );
+      const id = { major: 1, minor: 1 };
+      const textEdit = { identifier: id, range: range, text: text, forceMoveMarkers: true };
+      editor.executeEdits("my-source", [textEdit]);
+      editor.focus();
+    }
+  };
+
+  // Fetch schemas for active connection
+  useEffect(() => {
+    if (!activeConnection) {
+      setMetadataSchemas([]);
+      setMetadataSchema('');
+      return;
+    }
+
+    const fetchSchemas = async () => {
+      setIsLoadingMetadataSchemas(true);
+      try {
+        const res = await fetch('/api/oracle/schemas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connection: activeConnection })
+        });
+        const data = await res.json();
+        if (res.ok && data.schemas) {
+          setMetadataSchemas(data.schemas);
+          const defaultSchema = activeConnection.user?.toUpperCase() || data.schemas[0] || '';
+          setMetadataSchema(defaultSchema);
+        } else {
+          const fallback = activeConnection.user?.toUpperCase() || '';
+          setMetadataSchemas([fallback]);
+          setMetadataSchema(fallback);
+        }
+      } catch (err) {
+        console.error('Error fetching metadata schemas', err);
+        const fallback = activeConnection.user?.toUpperCase() || '';
+        setMetadataSchemas([fallback]);
+        setMetadataSchema(fallback);
+      } finally {
+        setIsLoadingMetadataSchemas(false);
+      }
+    };
+
+    fetchSchemas();
+  }, [activeConnection]);
+
+  // Fetch tables for selected schema
+  useEffect(() => {
+    if (!activeConnection || !metadataSchema) {
+      setMetadataTables([]);
+      setMetadataTable('');
+      setMetadataColumns([]);
+      return;
+    }
+
+    const fetchTables = async () => {
+      setIsLoadingMetadataTables(true);
+      try {
+        const res = await fetch('/api/oracle/objects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connection: activeConnection,
+            schema: metadataSchema.trim() || undefined
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.objects && data.objects.TABLE) {
+          const tableNames = data.objects.TABLE.map((t: any) => t.name).sort();
+          setMetadataTables(tableNames);
+          if (tableNames.length > 0) {
+            setMetadataTable(tableNames[0]);
+          } else {
+            setMetadataTable('');
+          }
+        } else {
+          setMetadataTables([]);
+          setMetadataTable('');
+        }
+      } catch (err) {
+        console.error('Error fetching metadata tables', err);
+        setMetadataTables([]);
+        setMetadataTable('');
+      } finally {
+        setIsLoadingMetadataTables(false);
+      }
+    };
+
+    fetchTables();
+  }, [activeConnection, metadataSchema]);
+
+  // Fetch columns for selected table
+  useEffect(() => {
+    if (!activeConnection || !metadataSchema || !metadataTable) {
+      setMetadataColumns([]);
+      return;
+    }
+
+    const fetchColumns = async () => {
+      setIsLoadingMetadataColumns(true);
+      try {
+        const res = await fetch('/api/oracle/table-columns', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connection: activeConnection,
+            schema: metadataSchema,
+            tableName: metadataTable
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.columns) {
+          setMetadataColumns(data.columns);
+        } else {
+          setMetadataColumns([]);
+        }
+      } catch (err) {
+        console.error('Error fetching metadata columns', err);
+        setMetadataColumns([]);
+      } finally {
+        setIsLoadingMetadataColumns(false);
+      }
+    };
+
+    fetchColumns();
+  }, [activeConnection, metadataSchema, metadataTable]);
+
+  // Filter tables by search query
+  const filteredTables = metadataTables.filter(t => 
+    t.toLowerCase().includes(tableSearch.toLowerCase())
+  );
 
   const handleLoginSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -1128,6 +1284,14 @@ export default function Home() {
             onClick={() => setIsCompareOpen(true)}
             variant="primary"
           />
+          <TbBtn
+            isDark={isDark}
+            icon={showMetadataPanel ? <EyeOff className={iconSize} /> : <Eye className={iconSize} />}
+            label={showMetadataPanel ? "Ocultar Explorador de Tablas" : "Mostrar Explorador de Tablas"}
+            onClick={() => setShowMetadataPanel(!showMetadataPanel)}
+            active={showMetadataPanel}
+            variant="success"
+          />
           
           {/* DBMS Output toggle (compact) */}
           <div className="ml-auto flex items-center">
@@ -1176,25 +1340,158 @@ export default function Home() {
           </button>
         </div>
 
-        <div className="h-[45%] border-b border-inherit relative">
-          <Editor
-            height="100%"
-            defaultLanguage="sql"
-            theme={isDark ? 'vs-dark' : 'light'}
-            value={activeTab.query}
-            onChange={(val) => updateTabContent(activeTab.id, val || '')}
-            onMount={handleEditorDidMount}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              fontFamily: 'JetBrains Mono, Consolas, monospace',
-              lineHeight: 24,
-              padding: { top: 16, bottom: 16 },
-              scrollBeyondLastLine: false,
-              smoothScrolling: true,
-              cursorBlinking: 'smooth',
-            }}
-          />
+        <div className="h-[45%] border-b border-inherit relative flex flex-row">
+          <div className="flex-1 min-w-0 h-full">
+            <Editor
+              height="100%"
+              defaultLanguage="sql"
+              theme={isDark ? 'vs-dark' : 'light'}
+              value={activeTab.query}
+              onChange={(val) => updateTabContent(activeTab.id, val || '')}
+              onMount={handleEditorDidMount}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 14,
+                fontFamily: 'JetBrains Mono, Consolas, monospace',
+                lineHeight: 24,
+                padding: { top: 16, bottom: 16 },
+                scrollBeyondLastLine: false,
+                smoothScrolling: true,
+                cursorBlinking: 'smooth',
+              }}
+            />
+          </div>
+
+          {showMetadataPanel && (
+            <div className={`w-80 border-l flex flex-col h-full shrink-0 ${
+              isDark ? 'border-gray-800 bg-gray-950 text-gray-250' : 'border-gray-200 bg-white text-gray-800'
+            }`}>
+              {/* Panel Header */}
+              <div className={`p-2 border-b flex items-center justify-between font-semibold text-[10px] uppercase tracking-wider ${
+                isDark ? 'bg-gray-900 border-gray-800 text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-600'
+              }`}>
+                <span className="flex items-center gap-1.5 font-bold">
+                  <Database className="w-3.5 h-3.5 text-blue-500" /> Explorador de Tablas
+                </span>
+                <button 
+                  onClick={() => setShowMetadataPanel(false)}
+                  className="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 text-red-500 transition-colors"
+                  title="Ocultar explorador"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Schema Selector */}
+              <div className="p-2 border-b flex flex-col gap-1 shrink-0">
+                <label className="text-[9px] font-bold opacity-60 uppercase">Esquema</label>
+                <select
+                  value={metadataSchema}
+                  onChange={(e) => setMetadataSchema(e.target.value)}
+                  style={{ colorScheme: isDark ? 'dark' : 'light' }}
+                  className={`w-full px-2 py-1 rounded border text-xs outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer ${
+                    isDark 
+                      ? 'bg-gray-900 border-gray-800 text-gray-200 focus:ring-blue-500' 
+                      : 'bg-white border-gray-300 text-gray-850 focus:ring-blue-500'
+                  }`}
+                >
+                  {isLoadingMetadataSchemas ? (
+                    <option value="">Cargando esquemas...</option>
+                  ) : (
+                    metadataSchemas.map(sch => (
+                      <option key={sch} value={sch} className={isDark ? 'bg-gray-900 text-gray-200' : 'bg-white text-gray-800'}>
+                        {sch}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              {/* Tables & Columns Container */}
+              <div className="flex-1 min-h-0 flex flex-col">
+                {/* Tables List */}
+                <div className="flex-1 min-h-0 flex flex-col border-b border-inherit">
+                  <div className="p-2 pb-0.5 flex flex-col gap-1 shrink-0">
+                    <label className="text-[9px] font-bold opacity-60 uppercase flex justify-between">
+                      <span>Tablas ({filteredTables.length})</span>
+                      <span className="normal-case opacity-45 font-normal">Doble clic para pegar</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={tableSearch}
+                      onChange={(e) => setTableSearch(e.target.value)}
+                      placeholder="Filtrar tablas..."
+                      className={`w-full px-2 py-0.5 rounded border text-[11px] outline-none focus:ring-1 focus:ring-blue-500 bg-transparent ${
+                        isDark ? 'border-gray-800 text-gray-250' : 'border-gray-300 text-gray-800'
+                      }`}
+                    />
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto px-2 py-1.5 custom-scrollbar space-y-0.5">
+                    {isLoadingMetadataTables ? (
+                      <div className="text-center py-4 text-xs opacity-50 flex items-center justify-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Cargando...
+                      </div>
+                    ) : filteredTables.length > 0 ? (
+                      filteredTables.map(tbl => (
+                        <div
+                          key={tbl}
+                          onClick={() => setMetadataTable(tbl)}
+                          onDoubleClick={() => insertTextAtCursor(tbl)}
+                          className={`px-1.5 py-1 rounded text-[11px] font-mono cursor-pointer transition-colors truncate select-none ${
+                            metadataTable === tbl
+                              ? (isDark ? 'bg-blue-500/15 text-blue-400 font-semibold' : 'bg-blue-50 text-blue-600 font-semibold')
+                              : (isDark ? 'hover:bg-gray-900 text-gray-300' : 'hover:bg-gray-100 text-gray-700')
+                          }`}
+                          title={`${tbl} (Doble clic para pegar)`}
+                        >
+                          📊 {tbl}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-4 text-xs opacity-40 italic">Ninguna tabla</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Columns List */}
+                <div className="flex-1 min-h-0 flex flex-col">
+                  <div className="p-2 pb-0.5 shrink-0">
+                    <label className="text-[9px] font-bold opacity-60 uppercase flex justify-between">
+                      <span>Columnas {metadataTable && `de ${metadataTable}`}</span>
+                      <span className="normal-case opacity-45 font-normal">Clic para pegar</span>
+                    </label>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto px-2 py-1 custom-scrollbar space-y-0.5">
+                    {!metadataTable ? (
+                      <div className="text-center py-6 text-[11px] opacity-40 italic">Selecciona una tabla</div>
+                    ) : isLoadingMetadataColumns ? (
+                      <div className="text-center py-6 text-[11px] opacity-50 flex items-center justify-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Cargando...
+                      </div>
+                    ) : metadataColumns.length > 0 ? (
+                      metadataColumns.map(col => (
+                        <div
+                          key={col.columnName}
+                          onClick={() => insertTextAtCursor(col.columnName)}
+                          className={`px-1.5 py-1 rounded text-[11px] font-mono cursor-pointer transition-colors flex justify-between items-center ${
+                            isDark ? 'hover:bg-gray-900 text-gray-350' : 'hover:bg-gray-100 text-gray-700'
+                          }`}
+                          title={`Clic para pegar ${col.columnName}`}
+                        >
+                          <span className="truncate font-semibold text-blue-500/80 dark:text-blue-400/80">{col.columnName}</span>
+                          <span className="text-[9px] opacity-50 shrink-0 font-normal pl-1.5">{col.dataType}{!col.nullable && '*'}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-6 text-[11px] opacity-40 italic">Sin columnas</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className={`flex-1 flex flex-col min-h-0 bg-opacity-50 ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
