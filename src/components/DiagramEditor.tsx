@@ -594,9 +594,20 @@ export default function DiagramEditor({
   const generateDdl = (selectedTablesSubset: string[]) => {
     const escapeSqlString = (str: string) => str.replace(/'/g, "''");
 
+    // Helper to clean SQL expressions/triggers: lowercase all identifiers and strip double quotes
+    // while preserving case inside single-quoted string literals.
+    const cleanSqlExpression = (expr: string) => {
+      if (!expr) return '';
+      const parts = expr.split("'");
+      for (let i = 0; i < parts.length; i += 2) {
+        parts[i] = parts[i].replace(/"/g, '').toLowerCase();
+      }
+      return parts.join("'");
+    };
+
     let ddl = `-- =============================================================================\n`;
     ddl += `-- SCRIPT DE CONSTRUCCIÓN DDL (Generado Automáticamente)\n`;
-    ddl += `-- Tablas seleccionadas: ${selectedTablesSubset.join(', ')}\n`;
+    ddl += `-- Tablas seleccionadas: ${selectedTablesSubset.map(t => t.toLowerCase().replace(/"/g, '')).join(', ')}\n`;
     ddl += `-- =============================================================================\n\n`;
 
     // 0. CREATE SEQUENCE statements (Detect sequences in trigger DDLs)
@@ -605,10 +616,10 @@ export default function DiagramEditor({
       const tableTriggers = (tableData.triggers || []).filter(tr => tr.tableName === t);
       tableTriggers.forEach(tr => {
         if (tr.triggerDdl) {
-          const seqRegex = /(\w+)\.nextval/gi;
+          const seqRegex = /"?([A-Za-z0-9_]+)"?\.nextval/gi;
           let match;
           while ((match = seqRegex.exec(tr.triggerDdl)) !== null) {
-            allSequencesFound.add(match[1].toUpperCase());
+            allSequencesFound.add(match[1].toLowerCase());
           }
         }
       });
@@ -626,19 +637,21 @@ export default function DiagramEditor({
 
     // 1. CREATE TABLE statements
     selectedTablesSubset.forEach(t => {
+      const cleanTableName = t.toLowerCase().replace(/"/g, '');
       const cols = tableData.columns.filter(c => c.tableName === t);
       const pks = tableData.primaryKeys ? tableData.primaryKeys.filter(pk => pk.tableName === t) : [];
       
-      ddl += `CREATE TABLE ${t} (\n`;
+      ddl += `CREATE TABLE ${cleanTableName} (\n`;
       
       const colLines = cols.map(c => {
         const isNullable = c.nullable === 'Y';
-        return `  ${c.columnName.padEnd(25)} ${c.dataType.toUpperCase()} ${isNullable ? 'NULL' : 'NOT NULL'}`;
+        const cleanColName = c.columnName.toLowerCase().replace(/"/g, '');
+        return `  ${cleanColName.padEnd(25)} ${c.dataType.toLowerCase()} ${isNullable ? 'NULL' : 'NOT NULL'}`;
       });
       
       if (pks.length > 0) {
-        const pkCols = pks.map(pk => pk.columnName).join(', ');
-        const constraintName = pks[0].constraintName || `PK_${t}`;
+        const pkCols = pks.map(pk => pk.columnName.toLowerCase().replace(/"/g, '')).join(', ');
+        const constraintName = (pks[0].constraintName || `PK_${t}`).toLowerCase().replace(/"/g, '');
         colLines.push(`  CONSTRAINT ${constraintName} PRIMARY KEY (${pkCols})`);
       }
       
@@ -650,12 +663,13 @@ export default function DiagramEditor({
       if (comments) {
         let hasComments = false;
         if (comments.tableComment) {
-          ddl += `COMMENT ON TABLE ${t} IS '${escapeSqlString(comments.tableComment)}';\n`;
+          ddl += `COMMENT ON TABLE ${cleanTableName} IS '${escapeSqlString(comments.tableComment)}';\n`;
           hasComments = true;
         }
         Object.entries(comments.columns || {}).forEach(([colName, colComment]) => {
           if (colComment) {
-            ddl += `COMMENT ON COLUMN ${t}.${colName} IS '${escapeSqlString(colComment)}';\n`;
+            const cleanColName = colName.toLowerCase().replace(/"/g, '');
+            ddl += `COMMENT ON COLUMN ${cleanTableName}.${cleanColName} IS '${escapeSqlString(colComment)}';\n`;
             hasComments = true;
           }
         });
@@ -679,10 +693,16 @@ export default function DiagramEditor({
         }
         
         rels.forEach(rel => {
-          ddl += `ALTER TABLE ${rel.fromTable}\n`;
-          ddl += `  ADD CONSTRAINT ${rel.constraintName}\n`;
-          ddl += `  FOREIGN KEY (${rel.fromColumn})\n`;
-          ddl += `  REFERENCES ${rel.toTable} (${rel.toColumn});\n\n`;
+          const fromTable = rel.fromTable.toLowerCase().replace(/"/g, '');
+          const constraintName = rel.constraintName.toLowerCase().replace(/"/g, '');
+          const fromColumn = rel.fromColumn.toLowerCase().replace(/"/g, '');
+          const toTable = rel.toTable.toLowerCase().replace(/"/g, '');
+          const toColumn = rel.toColumn.toLowerCase().replace(/"/g, '');
+
+          ddl += `ALTER TABLE ${fromTable}\n`;
+          ddl += `  ADD CONSTRAINT ${constraintName}\n`;
+          ddl += `  FOREIGN KEY (${fromColumn})\n`;
+          ddl += `  REFERENCES ${toTable} (${toColumn});\n\n`;
         });
       }
     });
@@ -709,13 +729,17 @@ export default function DiagramEditor({
 
         let tableConstraintDdl = '';
         Object.values(constraintGroups).forEach(cg => {
+          const cleanTableName = t.toLowerCase().replace(/"/g, '');
+          const cleanConstraintName = cg.constraintName.toLowerCase().replace(/"/g, '');
+
           if (cg.constraintType === 'U') {
-            const colsStr = cg.columns.join(', ');
-            tableConstraintDdl += `ALTER TABLE ${t} ADD CONSTRAINT ${cg.constraintName} UNIQUE (${colsStr});\n`;
+            const colsStr = cg.columns.map(c => c.toLowerCase().replace(/"/g, '')).join(', ');
+            tableConstraintDdl += `ALTER TABLE ${cleanTableName} ADD CONSTRAINT ${cleanConstraintName} UNIQUE (${colsStr});\n`;
           } else if (cg.constraintType === 'C') {
             const isNotNull = cg.searchCondition && /is\s+not\s+null/i.test(cg.searchCondition);
             if (!isNotNull && cg.searchCondition) {
-              tableConstraintDdl += `ALTER TABLE ${t} ADD CONSTRAINT ${cg.constraintName} CHECK (${cg.searchCondition});\n`;
+              const cleanCondition = cleanSqlExpression(cg.searchCondition);
+              tableConstraintDdl += `ALTER TABLE ${cleanTableName} ADD CONSTRAINT ${cleanConstraintName} CHECK (${cleanCondition});\n`;
             }
           }
         });
@@ -762,8 +786,10 @@ export default function DiagramEditor({
           }
 
           const uniqueStr = idx.uniqueness === 'UNIQUE' ? 'UNIQUE ' : '';
-          const colsStr = idx.columns.map(c => `${c.columnName} ${c.descend === 'DESC' ? 'DESC' : 'ASC'}`).join(', ');
-          tableIndexDdl += `CREATE ${uniqueStr}INDEX ${idx.indexName} ON ${t} (${colsStr});\n`;
+          const cleanIndexName = idx.indexName.toLowerCase().replace(/"/g, '');
+          const cleanTableName = t.toLowerCase().replace(/"/g, '');
+          const colsStr = idx.columns.map(c => `${c.columnName.toLowerCase().replace(/"/g, '')} ${c.descend === 'DESC' ? 'DESC' : 'ASC'}`).join(', ');
+          tableIndexDdl += `CREATE ${uniqueStr}INDEX ${cleanIndexName} ON ${cleanTableName} (${colsStr});\n`;
         });
 
         if (tableIndexDdl) {
@@ -791,7 +817,33 @@ export default function DiagramEditor({
         }
         tableTriggers.forEach(tr => {
           if (tr.triggerDdl) {
-            ddl += `${tr.triggerDdl.trim()}\n/\n\n`;
+            let cleanedTriggerDdl = tr.triggerDdl;
+
+            // Remove EDITIONABLE / NONEDITIONABLE keywords
+            cleanedTriggerDdl = cleanedTriggerDdl.replace(/\b(EDITIONABLE|NONEDITIONABLE)\b\s*/gi, '');
+
+            // Remove connection schema prefix if available
+            const targetSchema = selectedConnection?.user;
+            if (targetSchema) {
+              const escapedSchema = targetSchema.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+              const schemaRegex = new RegExp(`(?:"${escapedSchema}"|${escapedSchema})\\s*\\.\\s*`, 'gi');
+              cleanedTriggerDdl = cleanedTriggerDdl.replace(schemaRegex, '');
+            }
+
+            // General uppercase schema prefix removal: "SOME_SCHEMA"."MY_TABLE" -> "MY_TABLE"
+            // excluding keywords like NEW, OLD, PARENT, ROW
+            cleanedTriggerDdl = cleanedTriggerDdl.replace(/(?:"([A-Z0-9_]+)"|([A-Z0-9_]+))\s*\.\s*/g, (match, g1, g2) => {
+              const name = (g1 || g2).toUpperCase();
+              if (['NEW', 'OLD', 'PARENT', 'ROW'].includes(name)) {
+                return match;
+              }
+              return '';
+            });
+
+            // Convert names to lowercase and strip double quotes (preserving single quotes literals)
+            cleanedTriggerDdl = cleanSqlExpression(cleanedTriggerDdl);
+
+            ddl += `${cleanedTriggerDdl.trim()}\n/\n\n`;
           }
         });
       }

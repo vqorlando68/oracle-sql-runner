@@ -19,7 +19,7 @@ import {
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
   Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare, Eye, EyeOff,
   ChevronDown, ChevronUp, Maximize2, Minimize2, RefreshCw, Folder, ChevronRight,
-  Package
+  Package, LogOut
 } from 'lucide-react';
 import { ExecResult } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
@@ -125,7 +125,7 @@ function TbSep({ isDark }: { isDark: boolean }) {
 // ── Main Component ───────────────────────────────────────────────────────────
 export default function Home() {
   const {
-    isAuthenticated, login,
+    isAuthenticated, login, logout,
     isDark, activeConnectionId, connections, addHistory,
     tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent, formatOptions,
     favorites, favoriteSections, addFavoriteFromSql, updateFavoriteSql, addFavoriteSection,
@@ -182,6 +182,7 @@ export default function Home() {
   const [saveModal, setSaveModal] = useState<'overwrite' | 'new' | null>(null);
 
   const [passwordInput, setPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState(false);
   const [shake, setShake] = useState(false);
 
@@ -496,23 +497,32 @@ export default function Home() {
             {/* Input de Clave */}
             <div className="w-full space-y-2 mb-6">
               <label className="text-xs font-semibold opacity-70 ml-1">Contraseña de acceso</label>
-              <input
-                type="password"
-                autoFocus
-                placeholder="Ingresa la clave..."
-                value={passwordInput}
-                onChange={(e) => {
-                  setPasswordInput(e.target.value);
-                  if (loginError) setLoginError(false);
-                }}
-                className={`w-full py-3 px-4 rounded-2xl border text-sm font-medium transition-all outline-none text-center tracking-widest ${
-                  loginError 
-                    ? 'border-red-500 bg-red-500/5 focus:ring-2 focus:ring-red-500/20' 
-                    : isDark 
-                      ? 'border-gray-800 bg-gray-950/40 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20' 
-                      : 'border-gray-200 bg-gray-50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20'
-                }`}
-              />
+              <div className="relative w-full">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  autoFocus
+                  placeholder="Ingresa la clave..."
+                  value={passwordInput}
+                  onChange={(e) => {
+                    setPasswordInput(e.target.value);
+                    if (loginError) setLoginError(false);
+                  }}
+                  className={`w-full py-3 pl-4 pr-12 rounded-2xl border text-sm font-medium transition-all outline-none text-center tracking-widest ${
+                    loginError 
+                      ? 'border-red-500 bg-red-500/5 focus:ring-2 focus:ring-red-500/20' 
+                      : isDark 
+                        ? 'border-gray-800 bg-gray-950/40 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20' 
+                        : 'border-gray-200 bg-gray-50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20'
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className={`absolute right-3.5 top-1/2 -translate-y-1/2 p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200`}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
               {loginError && (
                 <p className="text-[11px] text-red-500 text-center font-semibold mt-1">Clave incorrecta. Inténtalo de nuevo.</p>
               )}
@@ -1426,8 +1436,8 @@ export default function Home() {
             variant="success"
           />
           
-          {/* DBMS Output toggle (compact) */}
-          <div className="ml-auto flex items-center">
+          {/* DBMS Output toggle (compact) & Log Out Button */}
+          <div className="ml-auto flex items-center gap-2">
             <label className={`flex items-center gap-1.5 text-xs cursor-pointer px-2.5 py-1 rounded-full transition-colors ${
               enableDbmsOutput
                 ? (isDark ? 'bg-green-500/15 text-green-400' : 'bg-green-100 text-green-600')
@@ -1441,6 +1451,20 @@ export default function Home() {
               />
               DBMS_OUT
             </label>
+
+            <TbSep isDark={isDark} />
+
+            <TbBtn
+              isDark={isDark}
+              icon={<LogOut className={iconSize} />}
+              label="Salir"
+              onClick={() => {
+                logout();
+                setPasswordInput('');
+                setShowPassword(false);
+              }}
+              variant="danger"
+            />
           </div>
         </div>
 

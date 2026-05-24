@@ -782,7 +782,11 @@ export default function BackupModal({
               {/* Code console logs */}
               <div className="space-y-1">
                 <label className="text-[9px] font-bold uppercase opacity-60 tracking-wider">Consola de Eventos</label>
-                <div className="h-32 rounded-xl p-3 font-mono text-[11px] overflow-y-auto space-y-1 border select-text custom-scrollbar bg-black/85 border-gray-900 text-gray-300">
+                <div className={`h-32 rounded-xl p-3 font-mono text-[11px] overflow-y-auto space-y-1 border select-text custom-scrollbar ${
+                  isDark 
+                    ? 'bg-black/85 border-gray-900 text-gray-300' 
+                    : 'bg-gray-50 border-gray-200 text-gray-800'
+                }`}>
                   {logs.map((log, index) => (
                     <div key={index} className="truncate">{log}</div>
                   ))}
