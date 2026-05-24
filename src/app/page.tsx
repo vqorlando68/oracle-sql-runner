@@ -823,9 +823,7 @@ export default function Home() {
     if (selectedText && selectedText.trim()) {
       queryToRun = selectedText.trim();
     } else {
-      const cursorLine = editor.getPosition()?.lineNumber || 1;
-      const fullText = editor.getModel().getValue();
-      queryToRun = getStatementAtCursor(fullText, cursorLine);
+      queryToRun = editor.getModel().getValue().trim();
     }
 
     if (!queryToRun.trim()) return;

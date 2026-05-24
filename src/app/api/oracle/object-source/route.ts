@@ -133,6 +133,14 @@ export async function POST(req: Request) {
       }
     }
 
+    // Clean source code: trim whitespace and remove EDITIONABLE/NONEDITIONABLE keywords
+    if (source) {
+      source = source.trim();
+      // Remove EDITIONABLE / NONEDITIONABLE keywords (case insensitive, whole word)
+      source = source.replace(/\bEDITIONABLE\b\s*/gi, '');
+      source = source.replace(/\bNONEDITIONABLE\b\s*/gi, '');
+    }
+
     return NextResponse.json({ success: true, source });
   } catch (error: any) {
     return NextResponse.json(
