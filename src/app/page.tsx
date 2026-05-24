@@ -17,7 +17,8 @@ import {
   Play, PlayCircle, Loader2, AlertTriangle, Clock, Database, Eraser, CheckCircle,
   Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus,
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
-  Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare, Eye, EyeOff
+  Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare, Eye, EyeOff,
+  ChevronDown, ChevronUp, Maximize2, Minimize2
 } from 'lucide-react';
 import { ExecResult } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
@@ -145,6 +146,7 @@ export default function Home() {
   const [detectedParams, setDetectedParams] = useState<string[]>([]);
   const [enableDbmsOutput, setEnableDbmsOutput] = useState(false);
   const [bottomTab, setBottomTab] = useState<'results' | 'dbms' | 'errors' | 'explain'>('results');
+  const [isBottomPanelMinimized, setIsBottomPanelMinimized] = useState(false);
   const [explainPlan, setExplainPlan] = useState<string | null>(null);
   const [formatModalOpen, setFormatModalOpen] = useState(false);
   const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
@@ -190,6 +192,7 @@ export default function Home() {
     setError(null);
     setResult(null);
     setCompileErrors([]);
+    setIsBottomPanelMinimized(false);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -1374,7 +1377,9 @@ export default function Home() {
           </button>
         </div>
 
-        <div className="h-[45%] border-b border-inherit relative flex flex-row">
+        <div className={`border-b border-inherit relative flex flex-row min-h-0 transition-all duration-300 ${
+          isBottomPanelMinimized ? 'flex-1' : 'h-[45%]'
+        }`}>
           <div className="flex-1 min-w-0 h-full">
             <Editor
               height="100%"
@@ -1528,22 +1533,24 @@ export default function Home() {
           )}
         </div>
 
-        <div className={`flex-1 flex flex-col min-h-0 bg-opacity-50 ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
+        <div className={`flex flex-col min-h-0 bg-opacity-50 transition-all duration-300 ${
+          isBottomPanelMinimized ? 'h-10 shrink-0 overflow-hidden' : 'flex-1'
+        } ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
           <div className={`px-2 flex items-center gap-1 border-b border-inherit ${isDark ? 'bg-gray-800/80' : 'bg-gray-200/50'}`}>
             <button 
-              onClick={() => setBottomTab('results')}
+              onClick={() => { setBottomTab('results'); setIsBottomPanelMinimized(false); }}
               className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${bottomTab === 'results' ? 'border-blue-500 text-blue-500' : 'border-transparent opacity-60 hover:opacity-100'}`}
             >
               <div className="flex items-center gap-2"><Database className="w-3.5 h-3.5" /> Results</div>
             </button>
             <button 
-              onClick={() => setBottomTab('dbms')}
+              onClick={() => { setBottomTab('dbms'); setIsBottomPanelMinimized(false); }}
               className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${bottomTab === 'dbms' ? 'border-blue-500 text-blue-500' : 'border-transparent opacity-60 hover:opacity-100'}`}
             >
               <div className="flex items-center gap-2"><MessageSquare className="w-3.5 h-3.5" /> DBMS Output</div>
             </button>
             <button 
-              onClick={() => setBottomTab('errors')}
+              onClick={() => { setBottomTab('errors'); setIsBottomPanelMinimized(false); }}
               className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${bottomTab === 'errors' ? 'border-red-500 text-red-500' : 'border-transparent opacity-60 hover:opacity-100'}`}
             >
               <div className="flex items-center gap-2">
@@ -1557,7 +1564,7 @@ export default function Home() {
               </div>
             </button>
             <button 
-              onClick={() => setBottomTab('explain')}
+              onClick={() => { setBottomTab('explain'); setIsBottomPanelMinimized(false); }}
               className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${bottomTab === 'explain' ? 'border-blue-500 text-blue-500' : 'border-transparent opacity-60 hover:opacity-100'}`}
             >
               <div className="flex items-center gap-2">
@@ -1566,13 +1573,25 @@ export default function Home() {
               </div>
             </button>
 
-            {result && (
-              <div className="flex items-center gap-4 text-xs ml-auto pr-2">
-                <span className="flex items-center gap-1 text-green-500"><CheckCircle className="w-3.5 h-3.5" /> Success</span>
-                <span className="flex items-center gap-1 opacity-70"><Clock className="w-3.5 h-3.5" /> {result.duration}ms</span>
-                <span className="flex items-center gap-1 opacity-70"><Database className="w-3.5 h-3.5" /> {result.rowCount} rows</span>
-              </div>
-            )}
+            <div className="ml-auto flex items-center gap-2 pr-2">
+              {result && (
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="flex items-center gap-1 text-green-500"><CheckCircle className="w-3.5 h-3.5" /> Success</span>
+                  <span className="flex items-center gap-1 opacity-70"><Clock className="w-3.5 h-3.5" /> {result.duration}ms</span>
+                  <span className="flex items-center gap-1 opacity-70"><Database className="w-3.5 h-3.5" /> {result.rowCount} rows</span>
+                </div>
+              )}
+              
+              <button
+                onClick={() => setIsBottomPanelMinimized(!isBottomPanelMinimized)}
+                className={`p-1.5 rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors ${
+                  isDark ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-800'
+                }`}
+                title={isBottomPanelMinimized ? "Restablecer espacio" : "Minimizar panel"}
+              >
+                {isBottomPanelMinimized ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-hidden relative">
