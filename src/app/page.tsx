@@ -25,6 +25,7 @@ import { ExecResult } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
 import CompareObjectsModal from '@/components/CompareObjectsModal';
 import DescribeObjectModal from '@/components/DescribeObjectModal';
+import BackupModal from '@/components/BackupModal';
 import { generatePlsqlOutline, OutlineNode } from '@/lib/plsql-parser';
 
 // ── Toolbar Icon Button ──────────────────────────────────────────────────────
@@ -154,6 +155,7 @@ export default function Home() {
   const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
   const [isDiagramOpen, setIsDiagramOpen] = useState(false);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
+  const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [columnsPanelHeight, setColumnsPanelHeight] = useState(250);
   const [showNavigator, setShowNavigator] = useState(true);
   const [expandedNavigatorNodes, setExpandedNavigatorNodes] = useState<Record<string, boolean>>({});
@@ -1410,6 +1412,13 @@ export default function Home() {
           />
           <TbBtn
             isDark={isDark}
+            icon={<Database className={iconSize} />}
+            label="Copia de Seguridad"
+            onClick={() => setIsBackupOpen(true)}
+            variant="primary"
+          />
+          <TbBtn
+            isDark={isDark}
             icon={showMetadataPanel ? <EyeOff className={iconSize} /> : <Eye className={iconSize} />}
             label={showMetadataPanel ? "Ocultar Explorador de Tablas" : "Mostrar Explorador de Tablas"}
             onClick={() => setShowMetadataPanel(!showMetadataPanel)}
@@ -2066,6 +2075,15 @@ export default function Home() {
         isDark={isDark}
         activeConnection={activeConnection}
         objectName={describeObjectName}
+        showToast={showToast}
+      />
+      <BackupModal
+        isOpen={isBackupOpen}
+        onClose={() => setIsBackupOpen(false)}
+        activeConnection={activeConnection}
+        schema={metadataSchema}
+        schemas={metadataSchemas}
+        isDark={isDark}
         showToast={showToast}
       />
     </main>

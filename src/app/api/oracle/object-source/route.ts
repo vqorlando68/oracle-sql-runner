@@ -21,6 +21,10 @@ export async function POST(req: Request) {
     let ddlType = originalType;
     if (ddlType === 'PACKAGE BODY') {
       ddlType = 'PACKAGE_BODY';
+    } else if (ddlType === 'TYPE BODY') {
+      ddlType = 'TYPE_BODY';
+    } else if (ddlType === 'JOB') {
+      ddlType = 'PROCOBJ';
     }
 
     let source = '';
@@ -94,6 +98,31 @@ export async function POST(req: Request) {
           // Absolute fallback
           source = `SELECT * FROM ${schema ? `${schema.toUpperCase()}.${upperName}` : upperName};`;
         }
+      } else if (originalType === 'JOB') {
+        // Fallback for DBMS_SCHEDULER Jobs: construct standard creation blocks
+        try {
+          const jobSql = schema
+            ? `SELECT job_type, job_action, repeat_interval, enabled FROM all_scheduler_jobs WHERE job_name = :name AND owner = :owner`
+            : `SELECT job_type, job_action, repeat_interval, enabled FROM user_scheduler_jobs WHERE job_name = :name`;
+          
+          const jobBinds: any = { name: upperName };
+          if (schema) jobBinds.owner = schema.toUpperCase();
+
+          const jobResult = await executeOracleQuery(connection, jobSql, jobBinds);
+          if (jobResult.rows && jobResult.rows.length > 0) {
+            const row = jobResult.rows[0];
+            const jType = row.JOB_TYPE || row.job_type || 'PLSQL_BLOCK';
+            const jAction = row.JOB_ACTION || row.job_action || 'NULL;';
+            const jInterval = row.REPEAT_INTERVAL || row.repeat_interval || '';
+            const jEnabled = (row.ENABLED || row.enabled) === 'TRUE' || (row.ENABLED || row.enabled) === true;
+            
+            source = `BEGIN\n  DBMS_SCHEDULER.CREATE_JOB (\n    job_name => '${upperName}',\n    job_type => '${jType}',\n    job_action => '${jAction.replace(/'/g, "''")}',\n    repeat_interval => '${jInterval}',\n    enabled => ${jEnabled ? 'TRUE' : 'FALSE'}\n  );\nEND;\n/`;
+          } else {
+            source = `-- No se encontró configuración del Scheduler Job ${upperName}`;
+          }
+        } catch (jobError: any) {
+          source = `-- Error al consultar configuración del Scheduler Job ${upperName}: ${jobError.message}`;
+        }
       } else {
         // Fallback for PL/SQL code: Query USER_SOURCE / ALL_SOURCE
         try {
@@ -133,12 +162,37 @@ export async function POST(req: Request) {
       }
     }
 
-    // Clean source code: trim whitespace and remove EDITIONABLE/NONEDITIONABLE keywords
+    // Clean source code: trim whitespace, remove EDITIONABLE/NONEDITIONABLE and schema prefixes
     if (source) {
       source = source.trim();
       // Remove EDITIONABLE / NONEDITIONABLE keywords (case insensitive, whole word)
       source = source.replace(/\bEDITIONABLE\b\s*/gi, '');
       source = source.replace(/\bNONEDITIONABLE\b\s*/gi, '');
+
+      // Remove schema prefixes (e.g. "SCHEMA". or SCHEMA.)
+      const targetSchema = schema || connection.user;
+      if (targetSchema) {
+        const escapedSchema = targetSchema.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const schemaRegex = new RegExp(`(?:"${escapedSchema}"|${escapedSchema})\\s*\\.\\s*`, 'gi');
+        source = source.replace(schemaRegex, '');
+      }
+
+      // Truncate PACKAGE BODY if compiling PACKAGE spec
+      if (originalType === 'PACKAGE') {
+        const bodyRegex = /\bCREATE\s+(?:OR\s+REPLACE\s+)?PACKAGE\s+BODY\b/i;
+        const match = source.match(bodyRegex);
+        if (match && match.index !== undefined) {
+          source = source.substring(0, match.index).trim();
+        }
+      }
+
+      // Unquote and lowercase the object name
+      const escapedName = name.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const quotedRegex = new RegExp(`"${escapedName}"`, 'gi');
+      source = source.replace(quotedRegex, name.toLowerCase());
+
+      const wordRegex = new RegExp(`\\b${escapedName}\\b`, 'gi');
+      source = source.replace(wordRegex, name.toLowerCase());
     }
 
     return NextResponse.json({ success: true, source });

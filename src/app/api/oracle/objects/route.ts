@@ -17,13 +17,13 @@ export async function POST(req: Request) {
       ? `
         SELECT object_name, object_type, status 
         FROM all_objects 
-        WHERE owner = :schema AND object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER', 'INDEX', 'SEQUENCE', 'SYNONYM')
+        WHERE owner = :schema AND object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER', 'INDEX', 'SEQUENCE', 'SYNONYM', 'TYPE', 'TYPE BODY', 'JOB')
         ORDER BY object_type, object_name
       `
       : `
         SELECT object_name, object_type, status 
         FROM user_objects 
-        WHERE object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER', 'INDEX', 'SEQUENCE', 'SYNONYM')
+        WHERE object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER', 'INDEX', 'SEQUENCE', 'SYNONYM', 'TYPE', 'TYPE BODY', 'JOB')
         ORDER BY object_type, object_name
       `;
 
@@ -45,7 +45,10 @@ export async function POST(req: Request) {
       TRIGGER: [],
       INDEX: [],
       SEQUENCE: [],
-      SYNONYM: []
+      SYNONYM: [],
+      TYPE: [],
+      'TYPE BODY': [],
+      JOB: []
     };
 
     if (result.rows && Array.isArray(result.rows)) {
