@@ -18,12 +18,14 @@ import {
   Plus, X, MessageSquare, Trash2, Wand2, Settings2, BookmarkCheck, BookmarkPlus,
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
   Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare, Eye, EyeOff,
-  ChevronDown, ChevronUp, Maximize2, Minimize2
+  ChevronDown, ChevronUp, Maximize2, Minimize2, RefreshCw, Folder, ChevronRight,
+  Package
 } from 'lucide-react';
 import { ExecResult } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
 import CompareObjectsModal from '@/components/CompareObjectsModal';
 import DescribeObjectModal from '@/components/DescribeObjectModal';
+import { generatePlsqlOutline, OutlineNode } from '@/lib/plsql-parser';
 
 // ── Toolbar Icon Button ──────────────────────────────────────────────────────
 function TbBtn({
@@ -152,6 +154,10 @@ export default function Home() {
   const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
   const [isDiagramOpen, setIsDiagramOpen] = useState(false);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
+  const [columnsPanelHeight, setColumnsPanelHeight] = useState(250);
+  const [showNavigator, setShowNavigator] = useState(true);
+  const [expandedNavigatorNodes, setExpandedNavigatorNodes] = useState<Record<string, boolean>>({});
+  const [plsqlOutline, setPlsqlOutline] = useState<OutlineNode[]>([]);
 
   // Metadata Right Panel States
   const [showMetadataPanel, setShowMetadataPanel] = useState(true);
@@ -265,6 +271,16 @@ export default function Home() {
   const activeConnection = connections.find(c => c.id === activeConnectionId);
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
   // Favorite linked to the current tab (if any)
+
+  // Update PL/SQL outline when query changes
+  useEffect(() => {
+    if (activeTab?.query) {
+      const outline = generatePlsqlOutline(activeTab.query);
+      setPlsqlOutline(outline);
+    } else {
+      setPlsqlOutline([]);
+    }
+  }, [activeTab?.query]);
 
   // Update F4 trigger ref on every render to ensure fresh states
   triggerDescribeObjectRef.current = (name: string) => {
@@ -1166,6 +1182,79 @@ export default function Home() {
     }
   };
 
+  // Render function for PL/SQL Object Navigator tree nodes
+  const renderOutlineNode = (node: OutlineNode, depth: number = 0) => {
+    const isFolder = node.type === 'folder' || node.type === 'package' || (node.type === 'subprogram' && node.children && node.children.length > 0);
+    const isExpanded = expandedNavigatorNodes[node.id] !== false; // default to expanded
+    
+    const toggleExpand = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      setExpandedNavigatorNodes(prev => ({
+        ...prev,
+        [node.id]: !isExpanded
+      }));
+    };
+    
+    const handleNodeClick = () => {
+      if (node.line) {
+        handleGoToErrorLine(node.line, 1);
+      }
+    };
+    
+    // Select styling and icons to match the IDE screenshot
+    let nodeIcon: React.ReactNode = null;
+    if (node.type === 'package') {
+      nodeIcon = <Package className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-500 shrink-0" />;
+    } else if (node.type === 'folder') {
+      nodeIcon = <Folder className="w-3.5 h-3.5 text-yellow-500 shrink-0 fill-yellow-500/20" />;
+    } else if (node.type === 'subprogram') {
+      nodeIcon = (
+        <span className="flex items-center gap-0.5 text-blue-600 dark:text-blue-400 font-bold text-[11px] font-sans select-none shrink-0 italic">
+          P()
+        </span>
+      );
+    } else if (node.type === 'parameter') {
+      nodeIcon = (
+        <span className="text-blue-500 dark:text-blue-400 font-mono text-[9px] select-none shrink-0 font-semibold leading-none border border-blue-500/20 px-0.5 rounded bg-blue-500/5">
+          {`(x,y)`}
+        </span>
+      );
+    } else if (node.type === 'declaration') {
+      nodeIcon = (
+        <span className="text-blue-500 dark:text-blue-400 font-bold font-mono text-[11px] select-none shrink-0 w-3 text-center border border-blue-500/20 rounded bg-blue-500/5 leading-none">
+          i
+        </span>
+      );
+    }
+    
+    return (
+      <div key={node.id} className="select-none w-full">
+        <div 
+          onClick={handleNodeClick}
+          className={`flex items-center gap-1.5 py-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer text-xs transition-colors w-full ${
+            node.type === 'package' ? 'font-semibold font-mono text-gray-800 dark:text-gray-150' : 'text-gray-600 dark:text-gray-300 font-mono'
+          }`}
+          style={{ paddingLeft: `${depth * 14 + 6}px` }}
+        >
+          {isFolder ? (
+            <button 
+              onClick={toggleExpand}
+              className="p-0.5 hover:bg-black/10 dark:hover:bg-white/10 rounded transition-colors shrink-0"
+            >
+              {isExpanded ? <ChevronDown className="w-3 h-3 opacity-60" /> : <ChevronRight className="w-3 h-3 opacity-60" />}
+            </button>
+          ) : (
+            <div className="w-4 shrink-0" />
+          )}
+          {nodeIcon}
+          <span className="truncate flex-1" title={node.label}>{node.label}</span>
+        </div>
+        
+        {isFolder && isExpanded && node.children && node.children.map(child => renderOutlineNode(child, depth + 1))}
+      </div>
+    );
+  };
+
   const handleGoToErrorLine = (line: number, position: number) => {
     const editor = editorRef.current;
     if (editor) {
@@ -1380,6 +1469,60 @@ export default function Home() {
         <div className={`border-b border-inherit relative flex flex-row min-h-0 transition-all duration-300 ${
           isBottomPanelMinimized ? 'flex-1' : 'h-[45%]'
         }`}>
+          {/* PL/SQL Object Navigator */}
+          {plsqlOutline.length > 0 && showNavigator && (
+            <div className={`w-64 border-r flex flex-col h-full shrink-0 ${
+              isDark ? 'border-gray-800 bg-gray-950 text-gray-200' : 'border-gray-200 bg-white text-gray-800'
+            }`}>
+              {/* Navigator Header */}
+              <div className={`p-2 border-b flex items-center justify-between font-semibold text-[10px] uppercase tracking-wider shrink-0 ${
+                isDark ? 'bg-gray-900 border-gray-800 text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-600'
+              }`}>
+                <span className="flex items-center gap-1.5 font-bold">
+                  <Activity className="w-3.5 h-3.5 text-blue-500 animate-pulse" /> Navigator
+                </span>
+                <div className="flex items-center gap-1">
+                  <button 
+                    onClick={() => {
+                      if (activeTab?.query) {
+                        setPlsqlOutline(generatePlsqlOutline(activeTab.query));
+                      }
+                    }}
+                    className="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 text-green-500 transition-colors"
+                    title="Actualizar navegador"
+                  >
+                    <RefreshCw className="w-3 h-3 text-green-500" />
+                  </button>
+                  <button 
+                    onClick={() => setShowNavigator(false)}
+                    className="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 text-red-500 transition-colors"
+                    title="Cerrar navegador"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+              
+              {/* Tree content */}
+              <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
+                {plsqlOutline.map(node => renderOutlineNode(node))}
+              </div>
+            </div>
+          )}
+
+          {/* Navigator Reopen Strip */}
+          {plsqlOutline.length > 0 && !showNavigator && (
+            <button
+              onClick={() => setShowNavigator(true)}
+              className={`w-6 h-full flex items-center justify-center border-r hover:bg-black/10 dark:hover:bg-white/5 transition-all text-xs shrink-0 ${
+                isDark ? 'border-gray-800 bg-gray-950/40 text-gray-400' : 'border-gray-200 bg-gray-50/40 text-gray-500'
+              }`}
+              title="Mostrar Navegador de Objeto"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
+
           <div className="flex-1 min-w-0 h-full">
             <Editor
               height="100%"
@@ -1493,8 +1636,38 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* Resizable Divider */}
+                <div 
+                  className={`h-1.5 cursor-row-resize hover:bg-blue-500/50 transition-colors shrink-0 ${
+                    isDark ? 'bg-gray-800' : 'bg-gray-200'
+                  }`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    const startY = e.clientY;
+                    const startHeight = columnsPanelHeight;
+                    
+                    const onMouseMove = (moveEvent: MouseEvent) => {
+                      const deltaY = moveEvent.clientY - startY;
+                      const newHeight = Math.max(80, Math.min(500, startHeight - deltaY));
+                      setColumnsPanelHeight(newHeight);
+                    };
+                    
+                    const onMouseUp = () => {
+                      document.removeEventListener('mousemove', onMouseMove);
+                      document.removeEventListener('mouseup', onMouseUp);
+                    };
+                    
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                  }}
+                  title="Arrastra para cambiar la altura del panel de columnas"
+                />
+
                 {/* Columns List */}
-                <div className="flex-1 min-h-0 flex flex-col">
+                <div 
+                  style={{ height: `${columnsPanelHeight}px` }}
+                  className="min-h-0 flex flex-col shrink-0"
+                >
                   <div className="p-2 pb-0.5 shrink-0">
                     <label className="text-[9px] font-bold opacity-60 uppercase flex justify-between">
                       <span>Columnas {metadataTable && `de ${metadataTable}`}</span>
