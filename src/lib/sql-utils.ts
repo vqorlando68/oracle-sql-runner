@@ -105,7 +105,7 @@ export function parseStatements(text: string): StatementInfo[] {
   let hasBeginBeenSeen = false;
   let nestingLevel = 0;
   
-  const lines = text.split(/\r?\n/);
+  const lines = text.split('\n');
   
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx];

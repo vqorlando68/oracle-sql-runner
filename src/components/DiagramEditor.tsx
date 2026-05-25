@@ -75,6 +75,7 @@ interface DiagramTab {
   showComments: Record<string, boolean>;
   pan: { x: number; y: number };
   zoom: number;
+  dbModelId?: number;
 }
 
 interface NodeState {
@@ -160,6 +161,7 @@ export default function DiagramEditor({
   const [hoveredRelation, setHoveredRelation] = useState<string | null>(null);
   
   const [diagramTitle, setDiagramTitle] = useState<string>('Modelo Relacional Activo');
+  const [activeDbModelId, setActiveDbModelId] = useState<number | null>(null);
   const [notes, setNotes] = useState<NoteState[]>([]);
 
   // Comments states
@@ -321,6 +323,25 @@ export default function DiagramEditor({
       if (!res.ok) {
         throw new Error(data.error || 'Error al guardar el modelo en la BD');
       }
+
+      // Query the ID of the saved model to update activeDbModelId
+      const idRes = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: selectedConnection,
+          sql: 'SELECT id FROM TKR_MODELOS_RELACIONALES WHERE nombre_modelo = :nombre_modelo',
+          binds: { nombre_modelo: name }
+        })
+      });
+      if (idRes.ok) {
+        const idData = await idRes.json();
+        const savedId = idData.rows?.[0]?.ID;
+        if (savedId) {
+          setActiveDbModelId(savedId);
+        }
+      }
+
       showToast(`Modelo '${name}' guardado en la base de datos`, 'success');
       setIsSyncModalOpen(false);
     } catch (err: any) {
@@ -351,7 +372,7 @@ export default function DiagramEditor({
       }
 
       const model = JSON.parse(row.MODELO_JSON);
-      loadDiagramModel(model);
+      loadDiagramModel(model, id);
       showToast(`Modelo '${name}' cargado desde la base de datos`, 'success');
       setIsSyncModalOpen(false);
     } catch (err: any) {
@@ -376,6 +397,10 @@ export default function DiagramEditor({
         throw new Error(data.error || 'Error al eliminar el modelo de la BD');
       }
       showToast(`Modelo '${name}' eliminado de la base de datos`, 'success');
+      
+      if (activeDbModelId === id) {
+        setActiveDbModelId(null);
+      }
       
       // Refresh list
       const models = await fetchDbModels();
@@ -407,7 +432,8 @@ export default function DiagramEditor({
         commentsData: {},
         showComments: {},
         pan: { x: 0, y: 0 },
-        zoom: 1.0
+        zoom: 1.0,
+        dbModelId: undefined
       };
       setDiagramTabs([initialTab]);
       setActiveTabId(initialTabId);
@@ -428,11 +454,11 @@ export default function DiagramEditor({
     }
   }, [isOpen, activeConnection, diagramTabs.length]);
 
-  // Synchronize canvas title text field with active tab's title in tabs list
+  // Synchronize canvas title and dbModelId with active tab in tabs list
   useEffect(() => {
     if (!activeTabId) return;
-    setDiagramTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, title: diagramTitle } : t));
-  }, [diagramTitle, activeTabId]);
+    setDiagramTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, title: diagramTitle, dbModelId: activeDbModelId || undefined } : t));
+  }, [diagramTitle, activeDbModelId, activeTabId]);
 
   // Fetch available tables on open
   useEffect(() => {
@@ -1085,7 +1111,8 @@ export default function DiagramEditor({
             commentsData,
             showComments,
             pan,
-            zoom
+            zoom,
+            dbModelId: activeDbModelId || undefined
           };
         }
         return t;
@@ -1105,6 +1132,7 @@ export default function DiagramEditor({
         setShowComments(targetTab.showComments);
         setPan(targetTab.pan);
         setZoom(targetTab.zoom);
+        setActiveDbModelId(targetTab.dbModelId || null);
         setActiveSelectedNodes([]);
         
         // Repopulate fetched comments ref cache
@@ -1134,7 +1162,8 @@ export default function DiagramEditor({
             commentsData,
             showComments,
             pan,
-            zoom
+            zoom,
+            dbModelId: activeDbModelId || undefined
           };
         }
         return t;
@@ -1152,7 +1181,8 @@ export default function DiagramEditor({
         commentsData: {},
         showComments: {},
         pan: { x: 0, y: 0 },
-        zoom: 1.0
+        zoom: 1.0,
+        dbModelId: undefined
       };
 
       // Load new tab blank state
@@ -1167,6 +1197,7 @@ export default function DiagramEditor({
       setPan({ x: 0, y: 0 });
       setZoom(1.0);
       setActiveSelectedNodes([]);
+      setActiveDbModelId(null);
       fetchedCommentsRef.current.clear();
 
       setActiveTabId(newTabId);
@@ -1332,7 +1363,7 @@ export default function DiagramEditor({
     }
   };
 
-  const loadDiagramModel = (model: any) => {
+  const loadDiagramModel = (model: any, dbModelId?: number) => {
     if (!model.tables || !model.nodes) {
       throw new Error('Formato JSON de modelo inválido.');
     }
@@ -1389,7 +1420,8 @@ export default function DiagramEditor({
       commentsData: model.commentsData || {},
       showComments: model.showComments || {},
       pan: model.pan || { x: 0, y: 0 },
-      zoom: model.zoom || 1.0
+      zoom: model.zoom || 1.0,
+      dbModelId: dbModelId
     };
 
     // Save active first, then append new loaded tab
@@ -1424,6 +1456,7 @@ export default function DiagramEditor({
       setShowComments(newTab.showComments);
       setPan(newTab.pan);
       setZoom(newTab.zoom);
+      setActiveDbModelId(dbModelId || null);
       setActiveSelectedNodes([]);
 
       fetchedCommentsRef.current.clear();
@@ -1907,6 +1940,15 @@ export default function DiagramEditor({
               {/* Tab Title */}
               <span className="truncate max-w-[120px]">{isActive ? diagramTitle : tab.title}</span>
 
+              {/* Database ID Indicator on Tab */}
+              {((isActive ? activeDbModelId : tab.dbModelId) !== null && (isActive ? activeDbModelId : tab.dbModelId) !== undefined) && (
+                <span className={`text-[9px] font-bold px-1 rounded flex items-center ${
+                  isDark ? 'bg-yellow-500/15 text-yellow-400' : 'bg-yellow-50 text-yellow-600'
+                }`} title={`Cargado de Base de Datos - ID: ${isActive ? activeDbModelId : tab.dbModelId}`}>
+                  ID: {isActive ? activeDbModelId : tab.dbModelId}
+                </span>
+              )}
+
               {/* Small connection details badge */}
               <span className={`text-[9px] font-normal px-1 py-0.5 rounded ${
                 isDark ? 'bg-gray-950/40 text-gray-500' : 'bg-gray-100 text-gray-450'
@@ -2058,6 +2100,18 @@ export default function DiagramEditor({
               style={{ width: '260px' }}
               title="Haz doble clic o escribe para cambiar el título del diagrama"
             />
+            
+            {/* Database ID Indicator on Canvas */}
+            {activeDbModelId !== null && activeDbModelId !== undefined && (
+              <div className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 select-none ${
+                isDark 
+                  ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400 shadow-xl shadow-black/20' 
+                  : 'bg-yellow-50 border-yellow-250 text-yellow-700 shadow-lg shadow-gray-250/20'
+              }`}>
+                <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+                <span>BD ID: {activeDbModelId}</span>
+              </div>
+            )}
           </div>
 
           {/* Scale Container */}
