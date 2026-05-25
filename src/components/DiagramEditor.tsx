@@ -4,11 +4,13 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   X, Plus, Minus, Maximize2, Download, Upload, Trash2, 
   Settings, Database, HelpCircle, Columns, RefreshCw, ZoomIn, ZoomOut, Check,
-  MessageSquare
+  MessageSquare, CloudUpload, CloudDownload
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import Editor from '@monaco-editor/react';
 import { useAppStore } from '@/store/useAppStore';
+import DiagramSyncModal from './DiagramSyncModal';
+import DiagramInstructionsModal from './DiagramInstructionsModal';
 
 interface ColumnMetadata {
   tableName: string;
@@ -187,6 +189,208 @@ export default function DiagramEditor({
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // DB Sync states for models
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [syncModalMode, setSyncModalMode] = useState<'save' | 'load'>('save');
+  const [dbModels, setDbModels] = useState<Array<{ ID: number; NOMBRE_MODELO: string }>>([]);
+  const [isInstructionsModalOpen, setIsInstructionsModalOpen] = useState(false);
+  const [syncError, setSyncError] = useState('');
+
+  // DB Sync functions for relational models
+  const fetchDbModels = async () => {
+    if (!selectedConnection) return [];
+    try {
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: selectedConnection,
+          sql: 'SELECT id, nombre_modelo FROM TKR_MODELOS_RELACIONALES ORDER BY nombre_modelo'
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Error al obtener modelos de la BD');
+      }
+      return data.rows || [];
+    } catch (err: any) {
+      throw err;
+    }
+  };
+
+  const handleOpenSaveDb = async () => {
+    if (!selectedConnection) {
+      showToast('Selecciona una conexión activa primero.', 'error');
+      return;
+    }
+    if (selectedTables.length === 0) {
+      showToast('No hay tablas en el diagrama para guardar.', 'info');
+      return;
+    }
+    setSyncError('');
+    setIsSyncModalOpen(true);
+    setSyncModalMode('save');
+    try {
+      const models = await fetchDbModels();
+      setDbModels(models);
+    } catch (err: any) {
+      console.error(err);
+      setSyncError(err.message || 'Error al conectar con la base de datos.');
+      if (err.message?.includes('TKR_MODELOS_RELACIONALES') || err.message?.includes('ORA-00942')) {
+        setIsInstructionsModalOpen(true);
+        setIsSyncModalOpen(false);
+      }
+    }
+  };
+
+  const handleOpenLoadDb = async () => {
+    if (!selectedConnection) {
+      showToast('Selecciona una conexión activa primero.', 'error');
+      return;
+    }
+    setSyncError('');
+    setIsSyncModalOpen(true);
+    setSyncModalMode('load');
+    try {
+      const models = await fetchDbModels();
+      setDbModels(models);
+    } catch (err: any) {
+      console.error(err);
+      setSyncError(err.message || 'Error al conectar con la base de datos.');
+      if (err.message?.includes('TKR_MODELOS_RELACIONALES') || err.message?.includes('ORA-00942')) {
+        setIsInstructionsModalOpen(true);
+        setIsSyncModalOpen(false);
+      }
+    }
+  };
+
+  const handleSaveToDb = async (name: string) => {
+    if (!selectedConnection) return;
+    const modelData = {
+      title: name,
+      tables: selectedTables,
+      nodes,
+      notes,
+      pan,
+      zoom,
+      commentsData,
+      showComments,
+      tableData,
+      savedConnection: selectedConnection 
+        ? {
+            name: selectedConnection.name,
+            user: selectedConnection.user,
+            host: selectedConnection.host,
+            port: selectedConnection.port,
+            serviceName: selectedConnection.serviceName
+          }
+        : 'Fuera de Línea'
+    };
+
+    const sql = `
+      DECLARE
+        v_count NUMBER;
+      BEGIN
+        SELECT COUNT(*) INTO v_count FROM TKR_MODELOS_RELACIONALES WHERE nombre_modelo = :nombre_modelo;
+        IF v_count > 0 THEN
+          UPDATE TKR_MODELOS_RELACIONALES SET modelo_json = :modelo_json WHERE nombre_modelo = :nombre_modelo;
+        ELSE
+          INSERT INTO TKR_MODELOS_RELACIONALES (nombre_modelo, modelo_json) VALUES (:nombre_modelo, :modelo_json);
+        END IF;
+      END;
+    `;
+
+    try {
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: selectedConnection,
+          sql,
+          binds: {
+            nombre_modelo: name,
+            modelo_json: JSON.stringify(modelData, null, 2)
+          },
+          bindTypes: {
+            modelo_json: 'clob'
+          }
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Error al guardar el modelo en la BD');
+      }
+      showToast(`Modelo '${name}' guardado en la base de datos`, 'success');
+      setIsSyncModalOpen(false);
+    } catch (err: any) {
+      throw err;
+    }
+  };
+
+  const handleLoadFromDb = async (id: number, name: string) => {
+    if (!selectedConnection) return;
+    try {
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: selectedConnection,
+          sql: 'SELECT modelo_json FROM TKR_MODELOS_RELACIONALES WHERE id = :id',
+          binds: { id }
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Error al cargar el modelo de la BD');
+      }
+      
+      const row = data.rows?.[0];
+      if (!row || !row.MODELO_JSON) {
+        throw new Error('No se encontró el contenido del modelo.');
+      }
+
+      const model = JSON.parse(row.MODELO_JSON);
+      loadDiagramModel(model);
+      showToast(`Modelo '${name}' cargado desde la base de datos`, 'success');
+      setIsSyncModalOpen(false);
+    } catch (err: any) {
+      throw err;
+    }
+  };
+
+  const handleDeleteFromDb = async (id: number, name: string) => {
+    if (!selectedConnection) return;
+    try {
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: selectedConnection,
+          sql: 'DELETE FROM TKR_MODELOS_RELACIONALES WHERE id = :id',
+          binds: { id }
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Error al eliminar el modelo de la BD');
+      }
+      showToast(`Modelo '${name}' eliminado de la base de datos`, 'success');
+      
+      // Refresh list
+      const models = await fetchDbModels();
+      setDbModels(models);
+    } catch (err: any) {
+      throw err;
+    }
+  };
+
+  // Sync selectedConnection with parent's activeConnection when diagram opens or connection changes
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedConnection(activeConnection);
+    }
+  }, [isOpen, activeConnection]);
 
   // Initialize first tab when diagram opens
   useEffect(() => {
@@ -1128,6 +1332,118 @@ export default function DiagramEditor({
     }
   };
 
+  const loadDiagramModel = (model: any) => {
+    if (!model.tables || !model.nodes) {
+      throw new Error('Formato JSON de modelo inválido.');
+    }
+
+    const newTabId = crypto.randomUUID();
+    const loadedTitle = model.title || 'Modelo Cargado';
+
+    let updatedNotes = model.notes ? [...model.notes] : [];
+    if (model.savedConnection) {
+      let connInfo = '';
+      if (typeof model.savedConnection === 'object' && model.savedConnection !== null) {
+        const conn = model.savedConnection;
+        connInfo = `🔌 Conexión: ${conn.name}\nUsuario: ${conn.user}\nHost: ${conn.host}\nPuerto: ${conn.port}\nServicio: ${conn.serviceName}`;
+      } else {
+        connInfo = `🌐 Conexión: ${model.savedConnection}`;
+      }
+      const noteText = `ℹ️ Información de Origen:\n${connInfo}\nFecha de carga: ${new Date().toLocaleDateString()}`;
+
+      // Remove previous origin info notes to avoid duplication
+      updatedNotes = updatedNotes.filter((n: any) => !n.text.includes('Información de Origen:'));
+
+      updatedNotes.push({
+        id: `origin-note-${Date.now()}`,
+        x: 50 - (model.pan?.x || 0) / (model.zoom || 1.0),
+        y: 50 - (model.pan?.y || 0) / (model.zoom || 1.0),
+        width: 280,
+        height: 135,
+        text: noteText,
+        color: '#bfdbfe' // blue info sticky note
+      });
+    }
+
+    let tabConnection: any = null;
+    if (typeof model.savedConnection === 'object' && model.savedConnection !== null) {
+      const matchedConn = connections.find(c => c.name === model.savedConnection.name || c.host === model.savedConnection.host);
+      if (matchedConn) {
+        tabConnection = matchedConn;
+      }
+    }
+    
+    // Fallback: If no matched connection was found from JSON, but there is an active connection, use it!
+    if (!tabConnection && activeConnection) {
+      tabConnection = activeConnection;
+    }
+
+    const newTab: DiagramTab = {
+      id: newTabId,
+      title: loadedTitle,
+      selectedConnection: tabConnection,
+      selectedTables: model.tables,
+      nodes: model.nodes,
+      tableData: model.tableData || { columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] },
+      notes: updatedNotes,
+      commentsData: model.commentsData || {},
+      showComments: model.showComments || {},
+      pan: model.pan || { x: 0, y: 0 },
+      zoom: model.zoom || 1.0
+    };
+
+    // Save active first, then append new loaded tab
+    setDiagramTabs(prev => {
+      const updated = prev.map(t => {
+        if (t.id === activeTabId) {
+          return {
+            ...t,
+            title: diagramTitle,
+            selectedConnection,
+            selectedTables,
+            nodes,
+            tableData,
+            notes,
+            commentsData,
+            showComments,
+            pan,
+            zoom
+          };
+        }
+        return t;
+      });
+
+      // Load the new tab's state
+      setDiagramTitle(newTab.title);
+      setSelectedConnection(newTab.selectedConnection);
+      setSelectedTables(newTab.selectedTables);
+      setNodes(newTab.nodes);
+      setTableData(newTab.tableData);
+      setNotes(newTab.notes);
+      setCommentsData(newTab.commentsData);
+      setShowComments(newTab.showComments);
+      setPan(newTab.pan);
+      setZoom(newTab.zoom);
+      setActiveSelectedNodes([]);
+
+      fetchedCommentsRef.current.clear();
+      Object.keys(newTab.commentsData).forEach(t => fetchedCommentsRef.current.add(t));
+
+      return [...updated, newTab];
+    });
+
+    setActiveTabId(newTabId);
+
+    // Fetch comments for tables in model if they aren't loaded and we have connection
+    if (tabConnection) {
+      model.tables.forEach((t: string) => {
+        if (!model.commentsData || !model.commentsData[t]) {
+          fetchCommentsForTable(t);
+        }
+      });
+    }
+  };
+
   const handleJsonFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1136,112 +1452,8 @@ export default function DiagramEditor({
     reader.onload = (event) => {
       try {
         const model = JSON.parse(event.target?.result as string);
-        if (!model.tables || !model.nodes) {
-          throw new Error('Formato JSON de modelo inválido.');
-        }
-
-        const newTabId = crypto.randomUUID();
-        const loadedTitle = model.title || 'Modelo Cargado';
-
-        let updatedNotes = model.notes ? [...model.notes] : [];
-        if (model.savedConnection) {
-          let connInfo = '';
-          if (typeof model.savedConnection === 'object' && model.savedConnection !== null) {
-            const conn = model.savedConnection;
-            connInfo = `🔌 Conexión: ${conn.name}\nUsuario: ${conn.user}\nHost: ${conn.host}\nPuerto: ${conn.port}\nServicio: ${conn.serviceName}`;
-          } else {
-            connInfo = `🌐 Conexión: ${model.savedConnection}`;
-          }
-          const noteText = `ℹ️ Información de Origen:\n${connInfo}\nFecha de carga: ${new Date().toLocaleDateString()}`;
-
-          // Remove previous origin info notes to avoid duplication
-          updatedNotes = updatedNotes.filter((n: any) => !n.text.includes('Información de Origen:'));
-
-          updatedNotes.push({
-            id: `origin-note-${Date.now()}`,
-            x: 50 - (model.pan?.x || 0) / (model.zoom || 1.0),
-            y: 50 - (model.pan?.y || 0) / (model.zoom || 1.0),
-            width: 280,
-            height: 135,
-            text: noteText,
-            color: '#bfdbfe' // blue info sticky note
-          });
-        }
-
-        let tabConnection: any = null;
-        if (typeof model.savedConnection === 'object' && model.savedConnection !== null) {
-          const matchedConn = connections.find(c => c.name === model.savedConnection.name || c.host === model.savedConnection.host);
-          if (matchedConn) {
-            tabConnection = matchedConn;
-          }
-        }
-
-        const newTab: DiagramTab = {
-          id: newTabId,
-          title: loadedTitle,
-          selectedConnection: tabConnection,
-          selectedTables: model.tables,
-          nodes: model.nodes,
-          tableData: model.tableData || { columns: [], relations: [], indexes: [], primaryKeys: [], triggers: [], constraints: [] },
-          notes: updatedNotes,
-          commentsData: model.commentsData || {},
-          showComments: model.showComments || {},
-          pan: model.pan || { x: 0, y: 0 },
-          zoom: model.zoom || 1.0
-        };
-
-        // Save active first, then append new loaded tab
-        setDiagramTabs(prev => {
-          const updated = prev.map(t => {
-            if (t.id === activeTabId) {
-              return {
-                ...t,
-                title: diagramTitle,
-                selectedConnection,
-                selectedTables,
-                nodes,
-                tableData,
-                notes,
-                commentsData,
-                showComments,
-                pan,
-                zoom
-              };
-            }
-            return t;
-          });
-
-          // Load the new tab's state
-          setDiagramTitle(newTab.title);
-          setSelectedConnection(newTab.selectedConnection);
-          setSelectedTables(newTab.selectedTables);
-          setNodes(newTab.nodes);
-          setTableData(newTab.tableData);
-          setNotes(newTab.notes);
-          setCommentsData(newTab.commentsData);
-          setShowComments(newTab.showComments);
-          setPan(newTab.pan);
-          setZoom(newTab.zoom);
-          setActiveSelectedNodes([]);
-
-          fetchedCommentsRef.current.clear();
-          Object.keys(newTab.commentsData).forEach(t => fetchedCommentsRef.current.add(t));
-
-          return [...updated, newTab];
-        });
-
-        setActiveTabId(newTabId);
-
-        // Fetch comments for tables in model if they aren't loaded and we have connection
-        if (tabConnection) {
-          model.tables.forEach((t: string) => {
-            if (!model.commentsData || !model.commentsData[t]) {
-              fetchCommentsForTable(t);
-            }
-          });
-        }
-
-        showToast(`Modelo '${loadedTitle}' cargado en una nueva pestaña`, 'success');
+        loadDiagramModel(model);
+        showToast(`Modelo '${model.title || 'Modelo Cargado'}' cargado en una nueva pestaña`, 'success');
       } catch (err: any) {
         showToast(`Error al cargar JSON: ${err.message}`, 'error');
       }
@@ -1609,6 +1821,35 @@ export default function DiagramEditor({
             title="Abrir modelo desde archivo JSON"
           >
             <Upload className="w-3.5 h-3.5" /> Cargar JSON
+          </button>
+
+          <button 
+            onClick={handleOpenSaveDb} 
+            disabled={selectedTables.length === 0 || !selectedConnection}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-semibold px-3 ${
+              !selectedConnection
+                ? 'opacity-40 cursor-not-allowed text-gray-500'
+                : isDark 
+                  ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 hover:bg-yellow-500/20 disabled:opacity-30' 
+                  : 'bg-yellow-50 text-yellow-700 border border-yellow-250 hover:bg-yellow-100 disabled:opacity-30'
+            }`}
+            title="Guardar modelo en la base de datos conectada"
+          >
+            <CloudUpload className="w-3.5 h-3.5" /> Guardar en BD
+          </button>
+          <button 
+            onClick={handleOpenLoadDb}
+            disabled={!selectedConnection}
+            className={`p-2 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-semibold px-3 ${
+              !selectedConnection
+                ? 'opacity-40 cursor-not-allowed text-gray-500'
+                : isDark 
+                  ? 'bg-blue-600/10 text-blue-400 border border-blue-500/30 hover:bg-blue-600/20' 
+                  : 'bg-blue-50 text-blue-600 border border-blue-250 hover:bg-blue-100'
+            }`}
+            title="Cargar modelo desde la base de datos conectada"
+          >
+            <CloudDownload className="w-3.5 h-3.5" /> Cargar de BD
           </button>
           
           <button 
@@ -2300,6 +2541,26 @@ export default function DiagramEditor({
           </div>
         </div>
       )}
+
+      {/* Diagram database sync modals */}
+      <DiagramSyncModal
+        isOpen={isSyncModalOpen}
+        isDark={isDark}
+        mode={syncModalMode}
+        dbModels={dbModels}
+        currentTitle={diagramTitle}
+        initialErrorMsg={syncError}
+        onSave={handleSaveToDb}
+        onLoad={handleLoadFromDb}
+        onDelete={handleDeleteFromDb}
+        onCancel={() => setIsSyncModalOpen(false)}
+      />
+
+      <DiagramInstructionsModal
+        isOpen={isInstructionsModalOpen}
+        isDark={isDark}
+        onClose={() => setIsInstructionsModalOpen(false)}
+      />
     </div>
   );
 }

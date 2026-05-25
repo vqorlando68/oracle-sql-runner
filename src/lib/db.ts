@@ -101,7 +101,14 @@ export async function closeSession(connectionParams: any): Promise<void> {
 }
 
 // ── Query Execution ─────────────────────────────────────────────────────────────
-export async function executeOracleQuery(connectionParams: any, sql: string, binds: any = {}, enableDbmsOutput: boolean = false) {
+export async function executeOracleQuery(
+  connectionParams: any,
+  sql: string,
+  binds: any = {},
+  enableDbmsOutput: boolean = false,
+  bindTypes?: Record<string, string>,
+  autoCommit: boolean = false
+) {
   let connection: oracledb.Connection;
   try {
     connection = await getOrCreateSession(connectionParams);
@@ -110,8 +117,29 @@ export async function executeOracleQuery(connectionParams: any, sql: string, bin
       await connection.execute(`BEGIN DBMS_OUTPUT.ENABLE(NULL); END;`);
     }
 
+    // Process bindTypes if provided
+    const processedBinds = { ...binds };
+    if (bindTypes) {
+      Object.keys(bindTypes).forEach(key => {
+        const type = bindTypes[key];
+        const val = processedBinds[key];
+        if (val !== undefined && val !== null) {
+          if (type === 'clob') {
+            processedBinds[key] = { val, type: oracledb.CLOB, dir: oracledb.BIND_IN };
+          } else if (type === 'blob') {
+            processedBinds[key] = { val, type: oracledb.BLOB, dir: oracledb.BIND_IN };
+          }
+        }
+      });
+    }
+
+    const options: oracledb.ExecuteOptions = {};
+    if (autoCommit) {
+      options.autoCommit = true;
+    }
+
     const startTime = Date.now();
-    const result = await connection.execute(sql, binds);
+    const result = await connection.execute(sql, processedBinds, options);
     const duration = Date.now() - startTime;
 
     let dbmsOutput: string[] | undefined = undefined;
