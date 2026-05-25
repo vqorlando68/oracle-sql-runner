@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   X, Database, Search, Plus, Trash2, Folder, Play, Loader2,
-  CheckCircle2, AlertCircle, FileText, Check
+  CheckCircle2, AlertCircle, FileText, Check, FolderOpen
 } from 'lucide-react';
 import { Connection } from '@/types';
 import { useAppStore } from '@/store/useAppStore';
@@ -83,6 +83,7 @@ export default function BackupModal({
   const [pendingDirectory, setPendingDirectory] = useState('');
   const [pendingFolderName, setPendingFolderName] = useState('');
   const [pendingHandle, setPendingHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [isPickingFolder, setIsPickingFolder] = useState(false);
 
   const isCancelledRef = useRef(false);
 
@@ -203,6 +204,8 @@ export default function BackupModal({
   };
 
   const handleSelectFolder = async () => {
+    if (isPickingFolder) return;
+    setIsPickingFolder(true);
     try {
       // 1. Try local API to select physical directory (Windows STA)
       const res = await fetch('/api/oracle/select-directory', {
@@ -212,17 +215,22 @@ export default function BackupModal({
       if (res.ok && data.success && data.path) {
         const selectedPath = data.path;
         const folderName = getFolderName(selectedPath);
-        setPendingDirectory(selectedPath);
-        setPendingFolderName(folderName);
-        setPendingHandle(null);
-        setShowReadPrompt(true);
+        // Apply directly – server-side access doesn't need browser permission dialog
+        setDirectory(selectedPath);
+        setDirectoryHandle(null);
+        showToast(`Carpeta "${folderName}" seleccionada`, 'info');
         return;
       } else if (data.cancelled) {
-        // User cancelled picker
+        // User cancelled picker – do nothing
+        return;
+      } else if (data.error) {
+        showToast(`Error al abrir el selector: ${data.error}`, 'error');
         return;
       }
     } catch (err) {
       console.warn('Backend select-directory failed, falling back to browser picker:', err);
+    } finally {
+      setIsPickingFolder(false);
     }
 
     // 2. Fallback to browser's directory picker
@@ -574,14 +582,18 @@ export default function BackupModal({
                 <button
                   type="button"
                   onClick={handleSelectFolder}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border shrink-0 flex items-center justify-center ${
+                  disabled={isPickingFolder}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border shrink-0 flex items-center justify-center gap-1.5 ${
                     isDark 
-                      ? 'bg-gray-800 border-gray-700 hover:bg-gray-700 text-blue-400' 
-                      : 'bg-gray-100 border-gray-300 hover:bg-gray-200 text-blue-600'
+                      ? 'bg-gray-800 border-gray-700 hover:bg-gray-700 text-blue-400 disabled:opacity-60' 
+                      : 'bg-gray-100 border-gray-300 hover:bg-gray-200 text-blue-600 disabled:opacity-60'
                   }`}
-                  title="Seleccionar carpeta de destino"
+                  title={isPickingFolder ? 'Abriendo selector...' : 'Seleccionar carpeta de destino'}
                 >
-                  <Folder className="w-4 h-4" />
+                  {isPickingFolder
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <FolderOpen className="w-4 h-4" />
+                  }
                 </button>
               </div>
             </div>
