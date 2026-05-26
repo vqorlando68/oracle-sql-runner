@@ -21,7 +21,7 @@ import {
   ChevronDown, ChevronUp, Maximize2, Minimize2, RefreshCw, Folder, ChevronRight,
   Package, LogOut, Key, Mail, Phone, ExternalLink, Copy, Sparkles, Code2, Cpu
 } from 'lucide-react';
-import { ExecResult } from '@/types';
+import { ExecResult, SqlTab } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
 import CompareObjectsModal from '@/components/CompareObjectsModal';
 import DescribeObjectModal from '@/components/DescribeObjectModal';
@@ -155,6 +155,15 @@ export default function Home() {
   const [lastBindTypes, setLastBindTypes] = useState<any>({});
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
+  // States for tab context menu and close confirmations
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    x: number;
+    y: number;
+    tab: SqlTab;
+  } | null>(null);
+  const [tabsQueueToClose, setTabsQueueToClose] = useState<SqlTab[]>([]);
+  const [currentTabToConfirm, setCurrentTabToConfirm] = useState<SqlTab | null>(null);
+
   const [paramsModalOpen, setParamsModalOpen] = useState(false);
   const [detectedParams, setDetectedParams] = useState<string[]>([]);
   const [enableDbmsOutput, setEnableDbmsOutput] = useState(false);
@@ -196,6 +205,76 @@ export default function Home() {
   const [loginError, setLoginError] = useState(false);
   const [shake, setShake] = useState(false);
   const [isRequestKeyOpen, setIsRequestKeyOpen] = useState(false);
+
+  // Tab context menu and closing queue handlers
+  useEffect(() => {
+    const handleWindowClick = () => {
+      setTabContextMenu(null);
+    };
+    window.addEventListener('click', handleWindowClick);
+    return () => {
+      window.removeEventListener('click', handleWindowClick);
+    };
+  }, []);
+
+  const checkIfTabIsModifiedFavorite = (tab: SqlTab): boolean => {
+    if (!tab.favoriteId) return false;
+    const fav = favorites.find(f => f.id === tab.favoriteId);
+    if (!fav) return false;
+    const normTabQuery = tab.query.replace(/\r\n/g, '\n').trim();
+    const normFavQuery = fav.sql.replace(/\r\n/g, '\n').trim();
+    return normTabQuery !== normFavQuery;
+  };
+
+  const startClosingQueue = (tabsList: SqlTab[]) => {
+    setTabsQueueToClose(tabsList);
+    processNextInCloseQueue(tabsList);
+  };
+
+  const processNextInCloseQueue = (currentQueue: SqlTab[]) => {
+    if (currentQueue.length === 0) {
+      setCurrentTabToConfirm(null);
+      return;
+    }
+
+    const nextTab = currentQueue[0];
+    const isModified = checkIfTabIsModifiedFavorite(nextTab);
+
+    if (isModified) {
+      setActiveTab(nextTab.id);
+      setCurrentTabToConfirm(nextTab);
+    } else {
+      removeTab(nextTab.id);
+      const remaining = currentQueue.slice(1);
+      setTabsQueueToClose(remaining);
+      processNextInCloseQueue(remaining);
+    }
+  };
+
+  const handleCloseTab = (tabId: string) => {
+    const tabToClose = tabs.find(t => t.id === tabId);
+    if (tabToClose) {
+      startClosingQueue([tabToClose]);
+    }
+  };
+
+  const handleCloseOtherTabs = (tabId: string) => {
+    const otherTabs = tabs.filter(t => t.id !== tabId);
+    startClosingQueue(otherTabs);
+  };
+
+  const handleCloseAllTabs = () => {
+    startClosingQueue(tabs);
+  };
+
+  const handleTabContextMenu = (e: React.MouseEvent, tab: SqlTab) => {
+    e.preventDefault();
+    setTabContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      tab
+    });
+  };
 
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
@@ -1868,6 +1947,7 @@ export default function Home() {
             <div 
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
+              onContextMenu={(e) => handleTabContextMenu(e, tab)}
               className={`flex items-center gap-2 px-3 py-1.5 text-sm border-t border-l border-r rounded-t-lg cursor-pointer max-w-[200px] ${
                 activeTab.id === tab.id 
                   ? (isDark ? 'bg-gray-950 border-gray-800 text-blue-400' : 'bg-white border-gray-200 text-blue-600') 
@@ -1876,7 +1956,7 @@ export default function Home() {
             >
               <span className="truncate">{tab.title} {idx + 1}</span>
               <button 
-                onClick={(e) => { e.stopPropagation(); removeTab(tab.id); }}
+                onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
                 className="p-0.5 rounded-md hover:bg-black/10 opacity-50 hover:opacity-100"
               >
                 <X className="w-3 h-3" />
@@ -2521,6 +2601,126 @@ export default function Home() {
         isDark={isDark}
         showToast={showToast}
       />
+
+      {/* Menu contextual para pestañas */}
+      {tabContextMenu && (
+        <div 
+          className="fixed z-[700] rounded-xl shadow-2xl border p-1 w-48 animate-fade-in backdrop-blur-md"
+          style={{ 
+            top: tabContextMenu.y, 
+            left: tabContextMenu.x,
+            backgroundColor: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+            borderColor: isDark ? 'rgba(31, 41, 55, 0.8)' : 'rgba(229, 231, 235, 0.8)'
+          }}
+        >
+          <button
+            onClick={() => {
+              handleCloseTab(tabContextMenu.tab.id);
+              setTabContextMenu(null);
+            }}
+            className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-colors text-left cursor-pointer ${
+              isDark ? 'hover:bg-gray-800 text-gray-200' : 'hover:bg-gray-100 text-gray-700'
+            }`}
+          >
+            <X className="w-3.5 h-3.5" />
+            Cerrar Tab
+          </button>
+          <button
+            onClick={() => {
+              handleCloseOtherTabs(tabContextMenu.tab.id);
+              setTabContextMenu(null);
+            }}
+            className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-colors text-left cursor-pointer ${
+              isDark ? 'hover:bg-gray-800 text-gray-200' : 'hover:bg-gray-100 text-gray-700'
+            }`}
+          >
+            <Minimize2 className="w-3.5 h-3.5" />
+            Cerrar los Otros Tabs
+          </button>
+          <button
+            onClick={() => {
+              handleCloseAllTabs();
+              setTabContextMenu(null);
+            }}
+            className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-colors text-left cursor-pointer ${
+              isDark ? 'hover:bg-red-500/10 text-red-400' : 'hover:bg-red-50 text-red-600'
+            }`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Cerrar Todos los Tabs
+          </button>
+        </div>
+      )}
+
+      {/* Modal confirmacion guardar favorito modificado al cerrar */}
+      {currentTabToConfirm && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className={`w-full max-w-sm rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 ${
+            isDark ? 'bg-gray-900 border-gray-700 text-gray-200 shadow-black/80' : 'bg-white border-gray-200 text-gray-800 shadow-gray-400/30'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-yellow-500/15">
+                <BookmarkCheck className="w-5 h-5 text-yellow-400" />
+              </div>
+              <div>
+                <h2 className="font-bold text-base">Guardar cambios</h2>
+                <p className="text-xs opacity-50">El favorito ha sido modificado</p>
+              </div>
+            </div>
+            <p className="text-sm">
+              ¿Deseas guardar los cambios del favorito <span className="font-semibold text-yellow-400">
+                {favorites.find(f => f.id === currentTabToConfirm.favoriteId)?.name || 'Favorito'}
+              </span> antes de cerrar el tab?
+            </p>
+            <div className="flex flex-col gap-2 mt-2">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentTabToConfirm.favoriteId) {
+                      updateFavoriteSql(currentTabToConfirm.favoriteId, currentTabToConfirm.query);
+                      showToast('Favorito guardado exitosamente', 'success');
+                    }
+                    removeTab(currentTabToConfirm.id);
+                    const remaining = tabsQueueToClose.slice(1);
+                    setTabsQueueToClose(remaining);
+                    processNextInCloseQueue(remaining);
+                  }}
+                  className="flex-1 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors cursor-pointer shadow-md"
+                >
+                  Sí
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    removeTab(currentTabToConfirm.id);
+                    const remaining = tabsQueueToClose.slice(1);
+                    setTabsQueueToClose(remaining);
+                    processNextInCloseQueue(remaining);
+                  }}
+                  className={`flex-1 py-2 rounded-lg text-sm border font-semibold transition-colors cursor-pointer ${
+                    isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  No
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setTabsQueueToClose([]);
+                  setCurrentTabToConfirm(null);
+                }}
+                className={`w-full py-2 rounded-lg text-sm border font-semibold transition-colors cursor-pointer ${
+                  isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-600'
+                }`}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
