@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAppStore, VARIOS_SECTION_ID } from '@/store/useAppStore';
 import {
   Database, History, Star, Plus, Trash2, Edit2, Settings2,
   CheckCircle, Eye, Download, X, Copy, StarOff,
-  FolderOpen, Clock, CloudDownload, CloudUpload,
-  ChevronRight, ChevronDown, Table, Code, Zap, Package, RefreshCw, Search, Play, Hammer, AlertTriangle,
+  FolderOpen, Folder, Clock, CloudDownload, CloudUpload,
+  ChevronRight, ChevronDown, ChevronUp, Table, Code, Zap, Package, RefreshCw, Search, Play, Hammer, AlertTriangle,
   Hash, User, Shield, Link, Settings, FileText, Info
 } from 'lucide-react';
 import { Connection } from '@/types';
@@ -82,7 +82,7 @@ export default function Sidebar() {
     connections, activeConnectionId, setActiveConnection, removeConnection,
     history, removeHistory,
     favorites, favoriteSections, addFavorite, removeFavorite, runFavorite, addFavoriteSection, removeFavoriteSection,
-    toggleTheme, isDark, addTab, tabs, setActiveTab, showToast,
+    toggleTheme, isDark, addTab, tabs, activeTabId, setActiveTab, showToast,
     loadFavoritesFromDb, saveFavoritesToDb, deleteFavoriteFromDb, updateTabContent,
     visibleObjectTypes, setVisibleObjectTypes,
   } = useAppStore();
@@ -90,6 +90,70 @@ export default function Sidebar() {
   const [tab, setTab] = useState<'connections' | 'schema' | 'history' | 'favorites'>('connections');
   const [isConnModalOpen, setConnModalOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+
+  const [expandedFavSections, setExpandedFavSections] = useState<Record<string, boolean>>({});
+  const [hoveredFav, setHoveredFav] = useState<any>(null);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [favSearchQuery, setFavSearchQuery] = useState('');
+  const [activeMatchIndex, setActiveMatchIndex] = useState<number>(-1);
+
+  // Memoized list of matching sections or favorites
+  const matchedFavItems = useMemo(() => {
+    if (!favSearchQuery.trim()) return [];
+    const query = favSearchQuery.toLowerCase();
+    const list: Array<{ type: 'section' | 'favorite'; id: string; parentId?: string }> = [];
+    
+    favoriteSections.forEach(sec => {
+      const secMatch = sec.name.toLowerCase().includes(query);
+      if (secMatch) {
+        list.push({ type: 'section', id: sec.id });
+      }
+      
+      const secFavs = favorites.filter(f => f.sectionId === sec.id);
+      secFavs.forEach(fav => {
+        if (fav.name.toLowerCase().includes(query)) {
+          list.push({ type: 'favorite', id: fav.id, parentId: sec.id });
+        }
+      });
+    });
+    
+    return list;
+  }, [favSearchQuery, favoriteSections, favorites]);
+
+  // Reset active match index when query or matches change
+  useEffect(() => {
+    if (matchedFavItems.length > 0) {
+      setActiveMatchIndex(0);
+    } else {
+      setActiveMatchIndex(-1);
+    }
+  }, [favSearchQuery, matchedFavItems]);
+
+  // Auto-expand and scroll to active search match
+  useEffect(() => {
+    if (activeMatchIndex >= 0 && activeMatchIndex < matchedFavItems.length) {
+      const activeItem = matchedFavItems[activeMatchIndex];
+      
+      // Auto-expand parent section if it's a favorite child
+      if (activeItem.type === 'favorite' && activeItem.parentId) {
+        setExpandedFavSections(prev => ({
+          ...prev,
+          [activeItem.parentId!]: true
+        }));
+      }
+
+      // Scroll the highlighted element into view
+      const timer = setTimeout(() => {
+        const elementId = `fav-tree-node-${activeItem.type}-${activeItem.id}`;
+        const el = document.getElementById(elementId);
+        if (el) {
+          el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      }, 80);
+
+      return () => clearTimeout(timer);
+    }
+  }, [activeMatchIndex, matchedFavItems]);
 
   // States for database objects
   const [objects, setObjects] = useState<any>(null);
@@ -999,10 +1063,11 @@ export default function Sidebar() {
 
         {/* ── FAVORITES ── */}
         {tab === 'favorites' && (
-          <div className="space-y-5">
+          <div className="space-y-4">
             {/* Botones de Sincronización con BD */}
-            <div className="grid grid-cols-2 gap-2 mb-4">
+            <div className="grid grid-cols-2 gap-2 mb-2">
               <button
+                type="button"
                 onClick={handleSaveFavoritesToDb}
                 disabled={isSyncing || !activeConnectionId}
                 className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold border transition-all ${
@@ -1022,6 +1087,7 @@ export default function Sidebar() {
                 Guardar en BD
               </button>
               <button
+                type="button"
                 onClick={handleLoadFavoritesFromDb}
                 disabled={isSyncing || !activeConnectionId}
                 className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold border transition-all ${
@@ -1042,121 +1108,296 @@ export default function Sidebar() {
               </button>
             </div>
 
-            {favoriteSections.map(section => {
-              const sectionFavs = favorites.filter(f => f.sectionId === section.id);
-              return (
-                <div key={section.id}>
-                  {/* Encabezado de sección */}
-                  <div className={`flex items-center gap-2 mb-2 pb-1 border-b ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
-                    <FolderOpen className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
-                    <span className="text-xs font-semibold uppercase tracking-wider opacity-70 truncate">{section.name}</span>
-                    <span className={`text-[10px] px-1.5 rounded-full font-medium ${isDark ? 'bg-gray-800 text-gray-400' : 'bg-gray-200 text-gray-500'}`}>
-                      {sectionFavs.length}
+            {/* Buscador de Favoritos y Secciones */}
+            <div className="space-y-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Buscar sección o favorito..."
+                  value={favSearchQuery}
+                  onChange={(e) => setFavSearchQuery(e.target.value)}
+                  className={`w-full py-2 pl-8 pr-20 rounded-xl text-xs border ${
+                    isDark
+                      ? 'bg-gray-950/40 border-gray-800 focus:border-blue-500 text-gray-200'
+                      : 'bg-white border-gray-200 focus:border-blue-500 text-gray-800'
+                  } outline-none transition-colors`}
+                />
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 opacity-40" />
+                
+                {/* Controles de Navegación de Búsqueda */}
+                {matchedFavItems.length > 0 && (
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    <span className="text-[9px] opacity-60 font-semibold mr-1">
+                      {activeMatchIndex + 1}/{matchedFavItems.length}
                     </span>
-                    {/* Botón borrar sección: solo si vacía y no es Varios */}
-                    {section.id !== VARIOS_SECTION_ID && sectionFavs.length === 0 && (
-                      <button
-                        onClick={() => { removeFavoriteSection(section.id); showToast('Sección eliminada', 'info'); }}
-                        className={`ml-auto p-1 rounded transition-colors ${isDark ? 'text-gray-600 hover:text-red-400 hover:bg-red-500/10' : 'text-gray-400 hover:text-red-500 hover:bg-red-50'}`}
-                        title="Eliminar sección vacía"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    )}
-                    {/* Si tiene items o es Varios, el contador queda al final con ml-auto */}
-                    {(section.id === VARIOS_SECTION_ID || sectionFavs.length > 0) && (
-                      <span className="ml-auto" />
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveMatchIndex(prev => (prev - 1 + matchedFavItems.length) % matchedFavItems.length);
+                      }}
+                      className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-gray-400 hover:text-gray-200 cursor-pointer"
+                      title="Coincidencia anterior"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveMatchIndex(prev => (prev + 1) % matchedFavItems.length);
+                      }}
+                      className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-gray-400 hover:text-gray-200 cursor-pointer"
+                      title="Siguiente coincidencia"
+                    >
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
                   </div>
-
-                  {/* Tarjetas de favoritos */}
-                  <div className="space-y-2 pl-1">
-                    {sectionFavs.map(fav => (
-                      <div key={fav.id} className={`rounded-xl overflow-hidden border ${isDark ? 'border-yellow-500/25' : 'border-yellow-400/30'} shadow-sm`}>
-                        {/* Barra nombre */}
-                        <div className={`flex items-center justify-between px-3 py-2 ${isDark ? 'bg-yellow-500/10' : 'bg-yellow-50'}`}>
-                          <div className="flex items-center gap-2 min-w-0">
-                            <Star className="w-3 h-3 text-yellow-400 fill-yellow-400 flex-shrink-0" />
-                            <span className="text-xs font-semibold text-yellow-500 truncate">{fav.name}</span>
-                          </div>
-                          <button
-                            onClick={() => {
-                              if (fav.dbId && activeConnection) {
-                                setDeleteConfirmModal({
-                                  isOpen: true,
-                                  favoriteId: fav.id,
-                                  dbId: fav.dbId,
-                                  name: fav.name
-                                });
-                              } else {
-                                removeFavorite(fav.id);
-                                showToast('Eliminado de favoritos', 'info');
-                              }
-                            }}
-                            className={`p-1 rounded flex-shrink-0 transition-colors ${isDark ? 'text-yellow-400/60 hover:text-red-400 hover:bg-red-500/10' : 'text-yellow-500/60 hover:text-red-500 hover:bg-red-50'}`}
-                            title="Quitar de favoritos"
-                          >
-                            <StarOff className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        {/* Cuerpo: misma tarjeta que historial */}
-                        <div
-                          onClick={() => openFavorite(fav.id, fav.name, fav.sql)}
-                          className={`p-3 text-sm cursor-pointer transition-colors ${isDark ? 'bg-gray-800/30 hover:bg-gray-800/60' : 'bg-white hover:bg-gray-50'}`}
-                        >
-                          {/* Última ejecución */}
-                          <div className="flex items-center gap-1 text-xs opacity-40 mb-1">
-                            <Clock className="w-3 h-3" />
-                            {fav.lastRunAt
-                              ? new Date(fav.lastRunAt).toLocaleString()
-                              : 'Sin ejecuciones aún'}
-                          </div>
-                          <div className="font-mono text-xs truncate opacity-80 mb-2">{fav.sql}</div>
-                          <div className="flex justify-between items-center text-xs">
-                            <span className="opacity-40 italic">Clic para abrir</span>
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSqlModal({
-                                    isOpen: true,
-                                    sql: fav.sql,
-                                    id: fav.id,
-                                    dbId: fav.dbId,
-                                    sectionName: section.name,
-                                    name: fav.name
-                                  });
-                                }}
-                                className="p-1 hover:bg-black/10 rounded text-blue-500" title="Ver SQL"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); saveAs(new Blob([fav.sql], { type: 'text/plain;charset=utf-8' }), `${fav.name}.sql`); }}
-                                className="p-1 hover:bg-black/10 rounded text-green-500" title="Descargar"
-                              >
-                                <Download className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    {sectionFavs.length === 0 && (
-                      <div className="text-xs opacity-30 italic pl-1">Sin favoritos en esta sección</div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            {favorites.length === 0 && favoriteSections.every(s => favorites.filter(f => f.sectionId === s.id).length === 0) && (
-              <div className="flex flex-col items-center gap-3 mt-8 opacity-40">
-                <Star className="w-8 h-8" />
-                <p className="text-sm text-center">Marca el ⭐ en el historial<br />para guardar favoritos.</p>
+                )}
               </div>
-            )}
+            </div>
+
+            {/* Controles para Expandir/Colapsar todo */}
+            <div className="flex gap-2 justify-between items-center text-xs pb-2 border-b border-gray-500/10">
+              <span className="opacity-50 font-bold uppercase tracking-wider text-[9px]">Árbol de favoritos</span>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const all: Record<string, boolean> = {};
+                    favoriteSections.forEach(s => {
+                      all[s.id] = true;
+                    });
+                    setExpandedFavSections(all);
+                  }}
+                  className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors cursor-pointer ${
+                    isDark 
+                      ? 'border-gray-800 bg-gray-900/50 hover:bg-gray-800 text-blue-400' 
+                      : 'border-gray-200 bg-white hover:bg-gray-100 text-blue-600'
+                  }`}
+                >
+                  Expandir todo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedFavSections({});
+                  }}
+                  className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors cursor-pointer ${
+                    isDark 
+                      ? 'border-gray-800 bg-gray-900/50 hover:bg-gray-800 text-gray-400 hover:text-gray-200' 
+                      : 'border-gray-200 bg-white hover:bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  Colapsar todo
+                </button>
+              </div>
+            </div>
+
+            {/* Árbol Jerárquico de Favoritos */}
+            <div className="space-y-1 font-sans">
+              {favoriteSections.map(section => {
+                const sectionFavs = favorites.filter(f => f.sectionId === section.id);
+                const isExpanded = !!expandedFavSections[section.id];
+                
+                const toggleSection = () => {
+                  setExpandedFavSections(prev => ({
+                    ...prev,
+                    [section.id]: !prev[section.id]
+                  }));
+                };
+
+                // Match details for section name
+                const isMatchedSec = matchedFavItems.some(item => item.type === 'section' && item.id === section.id);
+                const isActiveSec = activeMatchIndex >= 0 && matchedFavItems[activeMatchIndex]?.type === 'section' && matchedFavItems[activeMatchIndex]?.id === section.id;
+
+                const sectionHighlightClass = isActiveSec
+                  ? (isDark ? 'bg-blue-500/25 ring-2 ring-blue-500/50 text-blue-300 font-bold' : 'bg-blue-100/80 ring-2 ring-blue-500/50 text-blue-800 font-bold')
+                  : isMatchedSec
+                  ? (isDark ? 'bg-yellow-500/10 text-yellow-400 font-semibold' : 'bg-yellow-50 text-yellow-800 font-semibold')
+                  : '';
+
+                return (
+                  <div key={section.id} id={`fav-tree-node-section-${section.id}`} className="space-y-0.5">
+                    {/* Fila de Sección */}
+                    <div 
+                      onClick={toggleSection}
+                      className={`flex items-center gap-1.5 py-1.5 px-2 rounded-lg cursor-pointer transition-all ${
+                        isDark 
+                          ? 'hover:bg-gray-800/30 text-gray-300' 
+                          : 'hover:bg-gray-200/50 text-gray-700'
+                      } ${sectionHighlightClass}`}
+                    >
+                      {/* Chevron de Expansión */}
+                      <span className="opacity-60 transition-transform duration-200 flex-shrink-0">
+                        {isExpanded ? (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        )}
+                      </span>
+
+                      {/* Icono de Carpeta */}
+                      <span className="flex-shrink-0">
+                        {isExpanded ? (
+                          <FolderOpen className="w-4 h-4 text-yellow-500/80" />
+                        ) : (
+                          <Folder className="w-4 h-4 text-yellow-500/80" />
+                        )}
+                      </span>
+
+                      {/* Nombre y Total */}
+                      <span className="text-xs font-semibold truncate flex-1">
+                        {section.name} <span className="opacity-45">({sectionFavs.length})</span>
+                      </span>
+
+                      {/* Borrar Sección Vacía */}
+                      {section.id !== VARIOS_SECTION_ID && sectionFavs.length === 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFavoriteSection(section.id);
+                            showToast('Sección eliminada', 'info');
+                          }}
+                          className={`p-1 rounded transition-colors ${
+                            isDark ? 'text-gray-500 hover:text-red-400 hover:bg-red-500/10' : 'text-gray-400 hover:text-red-500 hover:bg-red-50'
+                          }`}
+                          title="Eliminar sección vacía"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Hijos (Favoritos) */}
+                    {isExpanded && (
+                      <div className="pl-5 space-y-0.5 border-l border-gray-500/10 ml-3.5">
+                        {sectionFavs.map(fav => {
+                          const isTabActive = tabs.find(t => t.id === activeTabId)?.favoriteId === fav.id || tabs.find(t => t.title === fav.name && t.query === fav.sql);
+
+                          // Match details for favorite child node
+                          const isMatchedFav = matchedFavItems.some(item => item.type === 'favorite' && item.id === fav.id);
+                          const isActiveFav = activeMatchIndex >= 0 && matchedFavItems[activeMatchIndex]?.type === 'favorite' && matchedFavItems[activeMatchIndex]?.id === fav.id;
+
+                          const favHighlightClass = isActiveFav
+                            ? (isDark ? 'bg-blue-500/25 ring-2 ring-blue-500/50 text-blue-300 font-bold' : 'bg-blue-100/80 ring-2 ring-blue-500/50 text-blue-800 font-bold')
+                            : isMatchedFav
+                            ? (isDark ? 'bg-yellow-500/10 text-yellow-400 font-semibold' : 'bg-yellow-50 text-yellow-800 font-semibold')
+                            : '';
+
+                          return (
+                            <div 
+                              key={fav.id}
+                              id={`fav-tree-node-favorite-${fav.id}`}
+                              className="relative group/fav"
+                            >
+                              <div
+                                onClick={() => openFavorite(fav.id, fav.name, fav.sql)}
+                                onMouseEnter={(e) => {
+                                  setHoveredFav(fav);
+                                  setMousePos({ x: e.clientX + 15, y: e.clientY + 10 });
+                                }}
+                                onMouseMove={(e) => {
+                                  setMousePos({ x: e.clientX + 15, y: e.clientY + 10 });
+                                }}
+                                onMouseLeave={() => {
+                                  setHoveredFav(null);
+                                }}
+                                className={`flex items-center justify-between py-1 px-2 rounded-lg cursor-pointer transition-all border ${
+                                  isTabActive
+                                    ? isDark 
+                                      ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400 font-semibold' 
+                                      : 'bg-yellow-50 border-yellow-400/40 text-yellow-700 font-semibold'
+                                    : isDark 
+                                      ? 'hover:bg-gray-800/20 border-transparent text-gray-400 hover:text-gray-200' 
+                                      : 'hover:bg-gray-150 border-transparent text-gray-600 hover:text-gray-800'
+                                } ${favHighlightClass}`}
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                  <Star className={`w-3.5 h-3.5 flex-shrink-0 ${
+                                    isTabActive ? 'text-yellow-400 fill-yellow-400' : 'text-gray-500/60 dark:text-gray-400/60'
+                                  }`} />
+                                  <span className="text-xs truncate">{fav.name}</span>
+                                </div>
+
+                                {/* Botones rápidos en hover */}
+                                <div className="opacity-0 group-hover/fav:opacity-100 flex items-center gap-0.5 transition-opacity ml-1.5 flex-shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSqlModal({
+                                        isOpen: true,
+                                        sql: fav.sql,
+                                        id: fav.id,
+                                        dbId: fav.dbId,
+                                        sectionName: section.name,
+                                        name: fav.name
+                                      });
+                                    }}
+                                    className={`p-0.5 rounded transition-colors ${
+                                      isDark ? 'hover:bg-gray-700 text-blue-400' : 'hover:bg-gray-250 text-blue-600'
+                                    }`}
+                                    title="Ver SQL completo"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      saveAs(new Blob([fav.sql], { type: 'text/plain;charset=utf-8' }), `${fav.name}.sql`);
+                                    }}
+                                    className={`p-0.5 rounded transition-colors ${
+                                      isDark ? 'hover:bg-gray-700 text-green-400' : 'hover:bg-gray-250 text-green-600'
+                                    }`}
+                                    title="Descargar SQL"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (fav.dbId && activeConnection) {
+                                        setDeleteConfirmModal({
+                                          isOpen: true,
+                                          favoriteId: fav.id,
+                                          dbId: fav.dbId,
+                                          name: fav.name
+                                        });
+                                      } else {
+                                        removeFavorite(fav.id);
+                                        showToast('Eliminado de favoritos', 'info');
+                                      }
+                                    }}
+                                    className={`p-0.5 rounded transition-colors ${
+                                      isDark ? 'hover:bg-gray-700 text-red-400' : 'hover:bg-gray-250 text-red-600'
+                                    }`}
+                                    title="Quitar de favoritos"
+                                  >
+                                    <StarOff className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {sectionFavs.length === 0 && (
+                          <div className="text-[10px] opacity-35 italic pl-2 py-0.5">Sin favoritos en esta sección</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {favorites.length === 0 && favoriteSections.every(s => favorites.filter(f => f.sectionId === s.id).length === 0) && (
+                <div className="flex flex-col items-center gap-3 mt-8 opacity-40">
+                  <Star className="w-8 h-8" />
+                  <p className="text-sm text-center">Marca el ⭐ en el historial<br />para guardar favoritos.</p>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1751,6 +1992,45 @@ export default function Sidebar() {
               >
                 Guardar Configuración
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hoveredFav && (
+        <div 
+          className={`fixed z-[300] w-96 md:w-[480px] p-5 rounded-2xl border shadow-2xl backdrop-blur-md pointer-events-none transition-opacity duration-200 font-sans text-xs ${
+            isDark 
+              ? 'bg-gray-950/95 border-blue-500/30 text-gray-100 shadow-black/90' 
+              : 'bg-white/98 border-blue-200 text-gray-800 shadow-gray-400/50'
+          }`}
+          style={{ 
+            top: `${Math.min(mousePos.y, typeof window !== 'undefined' ? window.innerHeight - 340 : mousePos.y)}px`, 
+            left: `${Math.min(mousePos.x, typeof window !== 'undefined' ? window.innerWidth - 500 : mousePos.x)}px` 
+          }}
+        >
+          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-inherit">
+            <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" />
+            <span className="font-extrabold truncate text-sm">{hoveredFav.name}</span>
+          </div>
+          
+          <div className="space-y-3">
+            <div>
+              <div className="text-[10px] opacity-40 uppercase font-semibold mb-1">Consulta SQL Guardada</div>
+              <div className="font-mono bg-black/15 dark:bg-black/45 p-3 rounded-xl max-h-64 overflow-y-auto text-[11px] leading-relaxed whitespace-pre-wrap break-all opacity-95 border border-inherit">
+                {hoveredFav.sql}
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4 text-[10px] opacity-60 border-t border-inherit pt-2">
+              <div>
+                <span className="block opacity-40 font-mono">FECHA CREACIÓN</span>
+                <span className="font-semibold">{new Date(hoveredFav.createdAt).toLocaleString()}</span>
+              </div>
+              <div>
+                <span className="block opacity-40 font-mono">ÚLTIMA EJECUCIÓN</span>
+                <span className="font-semibold">{hoveredFav.lastRunAt ? new Date(hoveredFav.lastRunAt).toLocaleString() : 'Sin ejecuciones aún'}</span>
+              </div>
             </div>
           </div>
         </div>
