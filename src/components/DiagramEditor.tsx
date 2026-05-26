@@ -1063,10 +1063,14 @@ export default function DiagramEditor({
             }
 
             // General uppercase schema prefix removal: "SOME_SCHEMA"."MY_TABLE" -> "MY_TABLE"
-            // excluding keywords like NEW, OLD, PARENT, ROW
-            cleanedTriggerDdl = cleanedTriggerDdl.replace(/(?:"([A-Z0-9_]+)"|([A-Z0-9_]+))\s*\.\s*/g, (match, g1, g2) => {
+            // excluding keywords like NEW, OLD, PARENT, ROW, and sequences (.nextval / .currval)
+            cleanedTriggerDdl = cleanedTriggerDdl.replace(/(?:"([A-Z0-9_]+)"|([A-Z0-9_]+))\s*\.\s*/g, (match, g1, g2, offset, string) => {
               const name = (g1 || g2).toUpperCase();
               if (['NEW', 'OLD', 'PARENT', 'ROW'].includes(name)) {
+                return match;
+              }
+              const remaining = string.slice(offset + match.length).trim().toLowerCase();
+              if (remaining.startsWith('nextval') || remaining.startsWith('currval')) {
                 return match;
               }
               return '';
