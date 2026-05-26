@@ -316,7 +316,8 @@ export default function DiagramEditor({
           },
           bindTypes: {
             modelo_json: 'clob'
-          }
+          },
+          autoCommit: true
         })
       });
       const data = await res.json();
@@ -389,7 +390,8 @@ export default function DiagramEditor({
         body: JSON.stringify({
           connection: selectedConnection,
           sql: 'DELETE FROM TKR_MODELOS_RELACIONALES WHERE id = :id',
-          binds: { id }
+          binds: { id },
+          autoCommit: true
         })
       });
       const data = await res.json();

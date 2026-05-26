@@ -383,7 +383,8 @@ export const useAppStore = create<AppState>()(
                 body: JSON.stringify({
                   connection,
                   sql: 'INSERT INTO TKR_FAVORITOS_SECCIONES (name) VALUES (:name)',
-                  binds: { name: sec.name }
+                  binds: { name: sec.name },
+                  autoCommit: true
                 })
               });
               if (!insertRes.ok) {
@@ -439,7 +440,8 @@ export const useAppStore = create<AppState>()(
                   },
                   bindTypes: {
                     last_run_at: fav.lastRunAt ? 'timestamp' : undefined
-                  }
+                  },
+                  autoCommit: true
                 })
               });
 
@@ -494,7 +496,8 @@ export const useAppStore = create<AppState>()(
             body: JSON.stringify({
               connection,
               sql: 'DELETE FROM TKR_FAVORITOS WHERE id = :id',
-              binds: { id: dbId }
+              binds: { id: dbId },
+              autoCommit: true
             })
           });
           if (!deleteRes.ok) {
