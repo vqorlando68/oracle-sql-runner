@@ -905,6 +905,23 @@ export default function Home() {
         }
       }
     });
+
+    // Ctrl+B → Remove blank lines
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, () => {
+      const model = editor.getModel();
+      if (model) {
+        const value = model.getValue();
+        const cleaned = value.split('\n').filter((line: string) => line.trim() !== '').join('\n');
+        
+        editor.executeEdits('remove-blank-lines', [{
+          range: model.getFullModelRange(),
+          text: cleaned,
+          forceMoveMarkers: true
+        }]);
+        
+        useAppStore.getState().showToast('Líneas en blanco eliminadas', 'success');
+      }
+    });
   };
 
   const handleFormat = () => {
