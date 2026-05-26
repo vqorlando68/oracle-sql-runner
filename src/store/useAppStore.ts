@@ -18,6 +18,7 @@ interface AppState {
   favorites: Favorite[];
   favoriteSections: FavoriteSection[];
   isDark: boolean;
+  visibleObjectTypes: string[];
 
   tabs: SqlTab[];
   activeTabId: string;
@@ -61,6 +62,7 @@ interface AppState {
   deleteFavoriteFromDb: (connection: Connection, dbId: number) => Promise<void>;
 
   toggleTheme: () => void;
+  setVisibleObjectTypes: (types: string[]) => void;
 
   addTab: (tab: SqlTab) => void;
   removeTab: (id: string) => void;
@@ -97,6 +99,8 @@ export const useAppStore = create<AppState>()(
       favoriteSections: DEFAULT_SECTIONS,
       isDark: true,
       historyRetentionDays: 30,
+      visibleObjectTypes: ['TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER'],
+      setVisibleObjectTypes: (types) => set({ visibleObjectTypes: types }),
 
       tabs: [{ id: 'default', title: 'Query 1', query: '-- Write your Oracle SQL here\nSELECT * FROM DUAL;' }],
       activeTabId: 'default',

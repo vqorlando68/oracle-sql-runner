@@ -6,7 +6,8 @@ import {
   Database, History, Star, Plus, Trash2, Edit2, Settings2,
   CheckCircle, Eye, Download, X, Copy, StarOff,
   FolderOpen, Clock, CloudDownload, CloudUpload,
-  ChevronRight, ChevronDown, Table, Code, Zap, Package, RefreshCw, Search, Play, Hammer, AlertTriangle
+  ChevronRight, ChevronDown, Table, Code, Zap, Package, RefreshCw, Search, Play, Hammer, AlertTriangle,
+  Hash, User, Shield, Link, Settings, FileText
 } from 'lucide-react';
 import { Connection } from '@/types';
 import ConnectionModal from './ConnectionModal';
@@ -17,6 +18,63 @@ import { saveAs } from 'file-saver';
 import Editor from '@monaco-editor/react';
 
 
+// ─── Metadata for Oracle object types ───────────────────────────────────────
+const OBJECT_TYPE_METADATA: Record<string, { label: string; icon: any; color: string }> = {
+  'TABLE': { label: 'Tablas', icon: Table, color: 'text-blue-400' },
+  'VIEW': { label: 'Vistas', icon: Eye, color: 'text-green-400' },
+  'MATERIALIZED VIEW': { label: 'Vistas Materializadas', icon: Eye, color: 'text-teal-400' },
+  'INDEX': { label: 'Índices', icon: Search, color: 'text-purple-400' },
+  'SEQUENCE': { label: 'Secuencias', icon: Hash, color: 'text-yellow-500' },
+  'SYNONYM': { label: 'Sinónimos', icon: Copy, color: 'text-indigo-400' },
+  'PROCEDURE': { label: 'Procedimientos', icon: Play, color: 'text-orange-400' },
+  'FUNCTION': { label: 'Funciones', icon: Code, color: 'text-pink-400' },
+  'PACKAGE': { label: 'Paquetes', icon: Package, color: 'text-purple-400' },
+  'TRIGGER': { label: 'Triggers', icon: Zap, color: 'text-yellow-400' },
+  'TYPE': { label: 'Tipos', icon: Settings, color: 'text-cyan-400' },
+  'DATABASE LINK': { label: 'Database Links', icon: Database, color: 'text-blue-300' },
+  'DIRECTORY': { label: 'Directorios', icon: FolderOpen, color: 'text-yellow-600' },
+  'JOB': { label: 'Jobs', icon: Clock, color: 'text-red-400' },
+  'USER': { label: 'Usuarios', icon: User, color: 'text-emerald-400' },
+  'ROLE': { label: 'Roles', icon: Shield, color: 'text-sky-400' },
+  'TABLESPACE': { label: 'Tablespaces', icon: Database, color: 'text-gray-400' },
+  'PROFILE': { label: 'Perfiles', icon: Shield, color: 'text-zinc-400' },
+  'DATAFILE': { label: 'Datafiles', icon: FileText, color: 'text-gray-500' }
+};
+
+const ALL_ORACLE_OBJECT_TYPES = [
+  'TABLE', 'VIEW', 'MATERIALIZED VIEW', 'INDEX', 'SEQUENCE', 'SYNONYM',
+  'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER', 'TYPE', 'TYPE BODY',
+  'DATABASE LINK', 'DIRECTORY', 'CLUSTER', 'TABLE PARTITION', 'INDEX PARTITION', 'LOB',
+  'JAVA SOURCE', 'JAVA CLASS', 'JAVA RESOURCE', 'LIBRARY', 'OPERATOR', 'CONTEXT',
+  'DIMENSION', 'OUTLINE', 'QUEUE', 'QUEUE TABLE', 'JOB', 'SCHEDULE', 'PROGRAM',
+  'CHAIN', 'RULE SET', 'EVALUATION CONTEXT', 'XML SCHEMA', 'XMLTYPE TABLE', 'MINING MODEL',
+  'EDITION', 'FLASHBACK ARCHIVE', 'ANALYTIC VIEW', 'ATTRIBUTE DIMENSION', 'HIERARCHY',
+  'SQL TRANSLATION PROFILE', 'LOCKDOWN PROFILE', 'ROLE', 'USER', 'PROFILE', 'TABLESPACE',
+  'DATAFILE', 'CONTROL FILE', 'REDO LOG', 'UNDO SEGMENT', 'TEMPORARY TABLE',
+  'GLOBAL TEMPORARY TABLE', 'EXTERNAL TABLE', 'NESTED TABLE', 'OBJECT TABLE',
+  'INDEX ORGANIZED TABLE', 'BITMAP INDEX', 'FUNCTION-BASED INDEX', 'DOMAIN INDEX',
+  'PARTITIONED TABLE', 'PARTITIONED INDEX', 'SUBPARTITION', 'MATERIALIZED VIEW LOG',
+  'SNAPSHOT LOG', 'RESOURCE PLAN', 'CONSUMER GROUP', 'CREDENTIAL', 'WALLET', 'PFILE',
+  'SPFILE', 'RESTORE POINT', 'AUDIT POLICY', 'UNIFIED AUDIT POLICY', 'VECTOR INDEX',
+  'PROPERTY GRAPH', 'JSON RELATIONAL DUALITY VIEW', 'BLOCKCHAIN TABLE', 'IMMUTABLE TABLE'
+];
+
+const getTypeMetadata = (type: string) => {
+  const meta = OBJECT_TYPE_METADATA[type];
+  if (meta) return meta;
+  
+  const label = type
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ') + 's';
+    
+  return {
+    label,
+    icon: FolderOpen,
+    color: 'text-gray-400'
+  };
+};
+
 // ─── Sidebar principal ────────────────────────────────────────────────────────
 export default function Sidebar() {
   const {
@@ -25,6 +83,7 @@ export default function Sidebar() {
     favorites, favoriteSections, addFavorite, removeFavorite, runFavorite, addFavoriteSection, removeFavoriteSection,
     toggleTheme, isDark, addTab, tabs, setActiveTab, showToast,
     loadFavoritesFromDb, saveFavoritesToDb, deleteFavoriteFromDb, updateTabContent,
+    visibleObjectTypes, setVisibleObjectTypes,
   } = useAppStore();
 
   const [tab, setTab] = useState<'connections' | 'schema' | 'history' | 'favorites'>('connections');
@@ -36,15 +95,26 @@ export default function Sidebar() {
   const [isLoadingObjects, setIsLoadingObjects] = useState(false);
   const [isLoadingSource, setIsLoadingSource] = useState(false);
   const [objectSearch, setObjectSearch] = useState('');
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
-    tables: false,
-    views: false,
-    procedures: false,
-    functions: false,
-    packages: false,
-    triggers: false
-  });
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
   const [expandedPackages, setExpandedPackages] = useState<Record<string, boolean>>({});
+  
+  const [isSelectObjectsModalOpen, setSelectObjectsModalOpen] = useState(false);
+  const [modalFilter, setModalFilter] = useState('');
+  const [tempSelectedTypes, setTempSelectedTypes] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (isSelectObjectsModalOpen) {
+      setTempSelectedTypes(visibleObjectTypes || []);
+      setModalFilter('');
+    }
+  }, [isSelectObjectsModalOpen, visibleObjectTypes]);
+
+  const filteredModalTypes = ALL_ORACLE_OBJECT_TYPES.filter(type => {
+    if (!modalFilter) return true;
+    const q = modalFilter.toLowerCase();
+    const meta = getTypeMetadata(type);
+    return type.toLowerCase().includes(q) || meta.label.toLowerCase().includes(q);
+  });
   
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -289,14 +359,15 @@ export default function Sidebar() {
     icon: React.ReactNode,
     defaultType: string
   ) => {
-    const isExpanded = expandedFolders[key];
+    const isExpanded = !!expandedFolders[key];
     const filtered = filterObjects(list);
     const count = list ? list.length : 0;
     
+    if (count === 0) return null;
     if (objectSearch && filtered.length === 0) return null;
 
     return (
-      <div className="space-y-0.5">
+      <div key={key} className="space-y-0.5">
         <div
           onClick={() => toggleFolder(key)}
           className={`flex items-center gap-1.5 py-1.5 px-2 rounded-lg cursor-pointer transition-colors ${
@@ -356,7 +427,7 @@ export default function Sidebar() {
     specs: { name: string; status: string }[] | undefined,
     bodies: { name: string; status: string }[] | undefined
   ) => {
-    const isExpanded = expandedFolders.packages;
+    const isExpanded = !!expandedFolders.PACKAGE;
     const uniquePkgs = Array.from(new Set([
       ...(specs || []).map(s => s.name),
       ...(bodies || []).map(b => b.name)
@@ -368,13 +439,14 @@ export default function Sidebar() {
     );
 
     const count = uniquePkgs.length;
+    if (count === 0) return null;
     if (objectSearch && filtered.length === 0) return null;
 
     return (
-      <div className="space-y-0.5">
+      <div key="PACKAGE" className="space-y-0.5">
         {/* Main Packages Folder */}
         <div
-          onClick={() => toggleFolder('packages')}
+          onClick={() => toggleFolder('PACKAGE')}
           className={`flex items-center gap-1.5 py-1.5 px-2 rounded-lg cursor-pointer transition-colors ${
             isDark ? 'hover:bg-gray-800/50' : 'hover:bg-gray-200/50'
           }`}
@@ -709,6 +781,12 @@ export default function Sidebar() {
           <button
             key={t}
             onClick={() => setTab(t)}
+            onContextMenu={(e) => {
+              if (t === 'schema') {
+                e.preventDefault();
+                setSelectObjectsModalOpen(true);
+              }
+            }}
             className={`flex-1 py-3 px-1 text-xs font-medium border-b-2 flex justify-center items-center gap-1 ${
               tab === t
                 ? t === 'favorites' ? 'border-yellow-400 text-yellow-400' : 'border-blue-500 text-blue-500'
@@ -781,6 +859,19 @@ export default function Sidebar() {
               </div>
             ) : (
               <>
+                {/* Header label with settings trigger */}
+                <div 
+                  className="flex items-center justify-between mb-1 opacity-75 select-none cursor-pointer hover:opacity-100 transition-opacity" 
+                  onContextMenu={(e) => { e.preventDefault(); setSelectObjectsModalOpen(true); }}
+                  onClick={() => setSelectObjectsModalOpen(true)}
+                  title="Clic derecho / clic para configurar objetos visibles"
+                >
+                  <span className="text-[10px] font-bold uppercase tracking-wider">Objetos</span>
+                  <div className="p-1 hover:bg-black/10 dark:hover:bg-white/10 rounded">
+                    <Settings2 className="w-3.5 h-3.5 text-blue-500" />
+                  </div>
+                </div>
+
                 {/* Refresh and Search Bar */}
                 <div className="flex items-center gap-2 mb-2">
                   <div className={`flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm ${
@@ -827,19 +918,28 @@ export default function Sidebar() {
                     No se han cargado objetos. Haz clic en actualizar.
                   </div>
                 ) : (
-                  <div className="space-y-1 font-mono text-xs select-none">
-                    {/* Tables Folder */}
-                    {renderFolder("Tablas", "tables", objects.TABLE, <Table className="w-3.5 h-3.5 text-blue-400" />, "TABLE")}
-                    {/* Views Folder */}
-                    {renderFolder("Vistas", "views", objects.VIEW, <Eye className="w-3.5 h-3.5 text-green-400" />, "VIEW")}
-                    {/* Procedures Folder */}
-                    {renderFolder("Procedimientos", "procedures", objects.PROCEDURE, <Play className="w-3.5 h-3.5 text-orange-400" />, "PROCEDURE")}
-                    {/* Functions Folder */}
-                    {renderFolder("Funciones", "functions", objects.FUNCTION, <Code className="w-3.5 h-3.5 text-pink-400" />, "FUNCTION")}
-                    {/* Packages Folder */}
-                    {renderPackagesFolder(objects.PACKAGE, objects['PACKAGE BODY'])}
-                    {/* Triggers Folder */}
-                    {renderFolder("Triggers", "triggers", objects.TRIGGER, <Zap className="w-3.5 h-3.5 text-yellow-400" />, "TRIGGER")}
+                  <div 
+                    className="space-y-1 font-mono text-xs select-none min-h-[150px]"
+                    onContextMenu={(e) => { e.preventDefault(); setSelectObjectsModalOpen(true); }}
+                  >
+                    {visibleObjectTypes.map(type => {
+                      if (type === 'PACKAGE' || type === 'PACKAGE BODY') {
+                        // Render Packages once
+                        if (type === 'PACKAGE') {
+                          const showSpec = visibleObjectTypes.includes('PACKAGE');
+                          const showBody = visibleObjectTypes.includes('PACKAGE BODY');
+                          return renderPackagesFolder(
+                            showSpec ? objects.PACKAGE : [],
+                            showBody ? objects['PACKAGE BODY'] : []
+                          );
+                        }
+                        return null;
+                      }
+
+                      const meta = getTypeMetadata(type);
+                      const list = objects[type];
+                      return renderFolder(meta.label, type, list, <meta.icon className={`w-3.5 h-3.5 ${meta.color}`} />, type);
+                    })}
                   </div>
                 )}
               </>
@@ -1399,6 +1499,155 @@ export default function Sidebar() {
         isDark={isDark}
         onClose={() => setShowSqlInstructions(false)}
       />
+
+      {/* Modal de Configuración de Objetos Visibles */}
+      {isSelectObjectsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs transition-opacity duration-300">
+          <div className={`w-full max-w-4xl max-h-[85vh] rounded-2xl border flex flex-col shadow-2xl transition-all duration-300 transform scale-100 ${
+            isDark ? 'bg-gray-900 border-gray-800 text-gray-100' : 'bg-white border-gray-200 text-gray-800'
+          }`}>
+            {/* Cabecera */}
+            <div className={`p-5 flex items-center justify-between border-b ${isDark ? 'border-gray-800' : 'border-gray-100'}`}>
+              <div className="flex items-center gap-2.5">
+                <Settings2 className="w-5 h-5 text-blue-500" />
+                <div>
+                  <h3 className="text-base font-bold tracking-tight">Configurar Objetos Visibles</h3>
+                  <p className="text-xs opacity-60">Selecciona cuáles tipos de objetos deseas que aparezcan en el árbol de navegación.</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectObjectsModalOpen(false)}
+                className={`p-2 rounded-xl transition-colors ${isDark ? 'hover:bg-gray-800 text-gray-400 hover:text-white' : 'hover:bg-gray-100 text-gray-500 hover:text-gray-900'}`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Barra de Acciones Rápidas y Filtro */}
+            <div className={`p-4 flex flex-col sm:flex-row gap-3 items-center justify-between border-b ${isDark ? 'border-gray-800' : 'border-gray-100'}`}>
+              {/* Buscador */}
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm w-full sm:max-w-xs ${
+                isDark ? 'bg-gray-800/40 border-gray-700' : 'bg-white border-gray-300'
+              }`}>
+                <Search className="w-4 h-4 opacity-50 flex-shrink-0" />
+                <input
+                  type="text"
+                  placeholder="Buscar tipo de objeto..."
+                  value={modalFilter}
+                  onChange={(e) => setModalFilter(e.target.value)}
+                  className="bg-transparent border-none outline-none w-full text-xs"
+                />
+                {modalFilter && (
+                  <button onClick={() => setModalFilter('')}>
+                    <X className="w-3.5 h-3.5 opacity-50 hover:opacity-100" />
+                  </button>
+                )}
+              </div>
+
+              {/* Botones de acción rápida */}
+              <div className="flex gap-2 w-full sm:w-auto justify-end">
+                <button
+                  onClick={() => setTempSelectedTypes(ALL_ORACLE_OBJECT_TYPES)}
+                  className={`py-1.5 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                    isDark ? 'border-gray-800 hover:border-gray-600 bg-gray-800/50 text-gray-200' : 'border-gray-200 hover:border-gray-300 bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  Marcar Todos
+                </button>
+                <button
+                  onClick={() => setTempSelectedTypes([])}
+                  className={`py-1.5 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                    isDark ? 'border-gray-800 hover:border-gray-600 bg-gray-800/50 text-gray-200' : 'border-gray-200 hover:border-gray-300 bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  Desmarcar Todos
+                </button>
+                <button
+                  onClick={() => setTempSelectedTypes(['TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER'])}
+                  className={`py-1.5 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                    isDark ? 'border-gray-800 hover:border-gray-600 bg-gray-800/50 text-gray-200' : 'border-gray-200 hover:border-gray-300 bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  Por Defecto
+                </button>
+              </div>
+            </div>
+
+            {/* Listado de Checkboxes */}
+            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {filteredModalTypes.map((type) => {
+                  const meta = getTypeMetadata(type);
+                  const isChecked = tempSelectedTypes.includes(type);
+                  const Icon = meta.icon;
+
+                  return (
+                    <label
+                      key={type}
+                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer select-none transition-all duration-200 ${
+                        isChecked
+                          ? isDark 
+                            ? 'bg-blue-900/10 border-blue-500/50 text-white' 
+                            : 'bg-blue-50/50 border-blue-400 text-blue-900'
+                          : isDark
+                          ? 'border-gray-800 bg-gray-800/20 hover:border-gray-700 text-gray-400 hover:text-gray-300'
+                          : 'border-gray-200 bg-white hover:border-gray-300 text-gray-600 hover:text-gray-800'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {
+                          if (isChecked) {
+                            setTempSelectedTypes(prev => prev.filter(t => t !== type));
+                          } else {
+                            setTempSelectedTypes(prev => [...prev, type]);
+                          }
+                        }}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
+                      />
+                      <Icon className={`w-4 h-4 flex-shrink-0 ${isChecked ? meta.color : 'opacity-40'}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold truncate leading-none">{meta.label}</p>
+                        <p className="text-[10px] opacity-40 font-mono mt-0.5 truncate">{type}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+                {filteredModalTypes.length === 0 && (
+                  <div className="col-span-full text-center py-10 opacity-50 text-xs italic">
+                    No se encontraron tipos de objeto que coincidan con la búsqueda.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className={`p-4 flex justify-end gap-3 border-t ${isDark ? 'border-gray-800 bg-gray-950/20' : 'border-gray-100 bg-gray-50/30'}`}>
+              <button
+                onClick={() => setSelectObjectsModalOpen(false)}
+                className={`py-2 px-5 rounded-xl text-xs font-semibold border transition-all active:scale-[0.98] cursor-pointer ${
+                  isDark
+                    ? 'border-gray-700 hover:border-gray-500 bg-gray-800 text-gray-200'
+                    : 'border-gray-300 hover:border-gray-400 bg-white text-gray-700'
+                }`}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  setVisibleObjectTypes(tempSelectedTypes);
+                  setSelectObjectsModalOpen(false);
+                  showToast('Configuración de objetos actualizada', 'success');
+                }}
+                className="py-2 px-6 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 transition-all active:scale-[0.98] cursor-pointer"
+              >
+                Guardar Configuración
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
