@@ -81,7 +81,7 @@ export default function Sidebar() {
   const {
     connections, activeConnectionId, setActiveConnection, removeConnection,
     history, removeHistory,
-    favorites, favoriteSections, addFavorite, removeFavorite, runFavorite, addFavoriteSection, removeFavoriteSection,
+    favorites, favoriteSections, addFavorite, removeFavorite, runFavorite, addFavoriteSection, removeFavoriteSection, clearAllFavorites,
     toggleTheme, isDark, addTab, tabs, activeTabId, setActiveTab, showToast,
     loadFavoritesFromDb, saveFavoritesToDb, deleteFavoriteFromDb, updateTabContent,
     visibleObjectTypes, setVisibleObjectTypes,
@@ -93,6 +93,8 @@ export default function Sidebar() {
 
   const [expandedFavSections, setExpandedFavSections] = useState<Record<string, boolean>>({});
   const [hoveredFav, setHoveredFav] = useState<any>(null);
+  const [isConfirmDeleteAllOpen, setIsConfirmDeleteAllOpen] = useState(false);
+  const [deleteSectionsCheckbox, setDeleteSectionsCheckbox] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [favSearchQuery, setFavSearchQuery] = useState('');
   const [activeMatchIndex, setActiveMatchIndex] = useState<number>(-1);
@@ -1189,6 +1191,22 @@ export default function Sidebar() {
                 >
                   Colapsar todo
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteSectionsCheckbox(false);
+                    setIsConfirmDeleteAllOpen(true);
+                  }}
+                  disabled={favorites.length === 0}
+                  className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors cursor-pointer flex items-center gap-1 ${
+                    isDark 
+                      ? 'border-red-900/30 bg-red-950/20 hover:bg-red-900/30 text-red-400 disabled:opacity-40 disabled:cursor-not-allowed' 
+                      : 'border-red-100 bg-red-50 hover:bg-red-100 text-red-600 disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Borrar todo
+                </button>
               </div>
             </div>
 
@@ -1667,6 +1685,66 @@ export default function Sidebar() {
                 className="flex-1 py-2 rounded-lg text-sm bg-red-600 hover:bg-red-500 text-white font-semibold transition-colors"
               >
                 Eliminar (DROP)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmacion borrar todos los favoritos */}
+      {isConfirmDeleteAllOpen && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className={`w-full max-w-sm rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 ${
+            isDark ? 'bg-gray-900 border-gray-700 text-gray-200 shadow-black/80' : 'bg-white border-gray-200 text-gray-800 shadow-gray-400/30'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-red-500/10 text-red-500">
+                <Trash2 className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <h2 className="font-bold text-base">Borrar todos los favoritos</h2>
+                <p className="text-xs opacity-50">Esta acción no se puede deshacer</p>
+              </div>
+            </div>
+            <p className="text-sm">
+              ¿Estás seguro de que deseas eliminar permanentemente <strong>todos los favoritos</strong> guardados localmente?
+            </p>
+            <label className="flex items-center gap-2 px-1 py-0.5 rounded cursor-pointer select-none text-xs opacity-80 hover:opacity-100 transition-opacity">
+              <input
+                type="checkbox"
+                checked={deleteSectionsCheckbox}
+                onChange={(e) => setDeleteSectionsCheckbox(e.target.checked)}
+                className={`rounded border-gray-300 h-3.5 w-3.5 focus:ring-blue-500/20 text-blue-600 cursor-pointer transition-colors ${
+                  isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
+                }`}
+              />
+              <span>Borrar también las secciones personalizadas</span>
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsConfirmDeleteAllOpen(false)}
+                className={`flex-1 py-2 rounded-lg text-sm border font-semibold transition-colors cursor-pointer ${
+                  isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-600'
+                }`}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearAllFavorites(deleteSectionsCheckbox);
+                  setIsConfirmDeleteAllOpen(false);
+                  showToast(
+                    deleteSectionsCheckbox
+                      ? 'Todos los favoritos y secciones locales han sido eliminados'
+                      : 'Todos los favoritos locales han sido eliminados',
+                    'success'
+                  );
+                }}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-500/20 transition-all hover:shadow-red-500/30 active:scale-[0.98] cursor-pointer"
+              >
+                Eliminar todo
               </button>
             </div>
           </div>
