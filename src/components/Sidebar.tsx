@@ -7,7 +7,7 @@ import {
   CheckCircle, Eye, Download, X, Copy, StarOff,
   FolderOpen, Clock, CloudDownload, CloudUpload,
   ChevronRight, ChevronDown, Table, Code, Zap, Package, RefreshCw, Search, Play, Hammer, AlertTriangle,
-  Hash, User, Shield, Link, Settings, FileText
+  Hash, User, Shield, Link, Settings, FileText, Info
 } from 'lucide-react';
 import { Connection } from '@/types';
 import ConnectionModal from './ConnectionModal';
@@ -16,6 +16,7 @@ import FavoriteSyncModal from './FavoriteSyncModal';
 import SqlInstructionsModal from './SqlInstructionsModal';
 import { saveAs } from 'file-saver';
 import Editor from '@monaco-editor/react';
+import { ORLANDO_IMAGE_BASE64 } from '@/constants/orlandoImage';
 
 
 // ─── Metadata for Oracle object types ───────────────────────────────────────
@@ -101,6 +102,7 @@ export default function Sidebar() {
   const [isSelectObjectsModalOpen, setSelectObjectsModalOpen] = useState(false);
   const [modalFilter, setModalFilter] = useState('');
   const [tempSelectedTypes, setTempSelectedTypes] = useState<string[]>([]);
+  const [isAboutModalOpen, setAboutModalOpen] = useState(false);
 
   useEffect(() => {
     if (isSelectObjectsModalOpen) {
@@ -1160,10 +1162,14 @@ export default function Sidebar() {
       </div>
 
       {/* Footer */}
-      <div className="p-4 border-t border-inherit">
-        <button onClick={toggleTheme} className="flex items-center gap-2 text-sm opacity-70 hover:opacity-100">
+      <div className="p-4 border-t border-inherit flex items-center justify-between">
+        <button onClick={toggleTheme} className="flex items-center gap-2 text-sm opacity-70 hover:opacity-100 transition-opacity cursor-pointer">
           <Settings2 className="w-4 h-4" />
           {isDark ? 'Light Mode' : 'Dark Mode'}
+        </button>
+        <button onClick={() => setAboutModalOpen(true)} className="flex items-center gap-1.5 text-sm opacity-70 hover:opacity-100 text-blue-500 hover:text-blue-400 transition-all font-semibold cursor-pointer">
+          <Info className="w-4 h-4" />
+          Acerca de
         </button>
       </div>
 
@@ -1499,6 +1505,107 @@ export default function Sidebar() {
         isDark={isDark}
         onClose={() => setShowSqlInstructions(false)}
       />
+
+      {/* Modal Acerca de (Orlando Arturo Valverde Quiceno) */}
+      {isAboutModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md transition-opacity duration-300">
+          {/* Futuristic animated background elements */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            <div className="absolute -top-[40%] -left-[40%] w-[80%] h-[80%] rounded-full bg-blue-500/10 blur-[120px] animate-pulse" style={{ animationDuration: '8s' }} />
+            <div className="absolute -bottom-[40%] -right-[40%] w-[80%] h-[80%] rounded-full bg-purple-500/10 blur-[120px] animate-pulse" style={{ animationDuration: '10s' }} />
+            <div className="absolute inset-0 bg-[linear-gradient(rgba(18,24,38,0)_95%,rgba(59,130,246,0.05)_98%,rgba(59,130,246,0.1)_100%)] bg-[length:100%_24px] pointer-events-none opacity-40 animate-scanline" />
+          </div>
+
+          <div className={`relative w-full max-w-md overflow-hidden rounded-3xl border shadow-2xl p-8 flex flex-col items-center text-center transition-all duration-500 transform scale-100 ${
+            isDark 
+              ? 'bg-gray-950/80 border-blue-500/30 text-gray-100 shadow-blue-500/5' 
+              : 'bg-white/90 border-blue-200 text-gray-800 shadow-blue-500/10'
+          }`} style={{ boxShadow: isDark ? '0 0 40px rgba(59, 130, 246, 0.15)' : '0 10px 40px rgba(0, 0, 0, 0.08)' }}>
+            
+            {/* Holographic Glowing Ring around Portrait */}
+            <div className="relative mb-6 group">
+              <div className="absolute -inset-1.5 rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 opacity-75 blur-xs group-hover:opacity-100 transition-opacity duration-500 animate-spin" style={{ animationDuration: '12s' }} />
+              <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 group-hover:scale-105 transition-transform duration-500" />
+              
+              {/* Scanline HUD overlay on the portrait */}
+              <div className="relative w-28 h-28 rounded-full overflow-hidden border-2 border-inherit bg-gray-900 flex-shrink-0 z-10">
+                <img 
+                  src={ORLANDO_IMAGE_BASE64} 
+                  alt="Orlando Arturo Valverde Quiceno" 
+                  className="w-full h-full object-cover select-none scale-105 group-hover:scale-110 transition-transform duration-500"
+                />
+                <div className="absolute inset-0 bg-blue-500/5 mix-blend-color" />
+                <div className="absolute inset-0 bg-[linear-gradient(rgba(18,24,38,0)_50%,rgba(59,130,246,0.15)_50%)] bg-[length:100%_4px] opacity-60" />
+                <div className="absolute top-0 left-0 w-full h-[2px] bg-blue-400 opacity-60 animate-hud-scan" />
+              </div>
+            </div>
+
+            {/* Developer Identity */}
+            <div className="space-y-1 mb-6">
+              <span className="text-[10px] font-extrabold tracking-widest text-blue-500 uppercase">Lead Developer</span>
+              <h3 className="text-xl font-black tracking-tight bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 bg-clip-text text-transparent">
+                Orlando Arturo Valverde Quiceno
+              </h3>
+              <p className="text-xs opacity-60 font-medium">Arquitecto & Desarrollador Principal</p>
+            </div>
+
+            {/* Futuristic Stats / Info Grid */}
+            <div className="w-full space-y-3 mb-6 font-mono text-xs">
+              <div className={`p-3 rounded-2xl border flex items-center justify-between group transition-colors ${isDark ? 'bg-gray-900/40 border-gray-800/80 hover:border-blue-500/20' : 'bg-gray-50 border-gray-100 hover:border-blue-200'}`}>
+                <span className="opacity-40 text-[10px] uppercase">E-Mail</span>
+                <span 
+                  onClick={() => {
+                    navigator.clipboard.writeText('vqorlando@gmail.com');
+                    showToast('Correo copiado al portapapeles', 'success');
+                  }} 
+                  className="font-bold text-blue-500 hover:text-blue-400 cursor-pointer transition-colors"
+                  title="Haga clic para copiar"
+                >
+                  vqorlando@gmail.com
+                </span>
+              </div>
+              <div className={`p-3 rounded-2xl border flex items-center justify-between group transition-colors ${isDark ? 'bg-gray-900/40 border-gray-800/80 hover:border-blue-500/20' : 'bg-gray-50 border-gray-100 hover:border-blue-200'}`}>
+                <span className="opacity-40 text-[10px] uppercase">Teléfono</span>
+                <span 
+                  onClick={() => {
+                    navigator.clipboard.writeText('+573168226095');
+                    showToast('Teléfono copiado al portapapeles', 'success');
+                  }}
+                  className="font-bold text-blue-500 hover:text-blue-400 cursor-pointer transition-colors"
+                  title="Haga clic para copiar"
+                >
+                  +57 316 8226095
+                </span>
+              </div>
+            </div>
+
+            {/* Description */}
+            <div className="w-full text-xs opacity-80 leading-relaxed mb-6">
+              <p className="mb-2">
+                Este programa ha sido diseñado para simplificar la ejecución y administración de consultas en Oracle Database.
+              </p>
+              <div className={`p-3.5 rounded-2xl border bg-gradient-to-r ${
+                isDark 
+                  ? 'from-blue-950/20 to-purple-950/20 border-blue-500/10 text-blue-300' 
+                  : 'from-blue-50/50 to-purple-50/50 border-blue-100 text-blue-800'
+              }`}>
+                <p className="font-semibold flex items-center justify-center gap-1.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping" />
+                  Programa desarrollado con ayuda de Antigravity.
+                </p>
+              </div>
+            </div>
+
+            {/* Close Button */}
+            <button
+              onClick={() => setAboutModalOpen(false)}
+              className="py-2.5 px-8 rounded-xl text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg shadow-blue-500/20 transition-all hover:shadow-blue-500/30 active:scale-[0.98] cursor-pointer"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modal de Configuración de Objetos Visibles */}
       {isSelectObjectsModalOpen && (

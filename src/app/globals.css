@@ -3,6 +3,18 @@
 @theme {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  
+  --animate-scanline: scanline 8s linear infinite;
+  --animate-hud-scan: hud-scan 3s ease-in-out infinite;
+
+  @keyframes scanline {
+    0% { background-position: 0 0; }
+    100% { background-position: 0 100%; }
+  }
+  @keyframes hud-scan {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(110px); }
+  }
 }
 
 :root {
