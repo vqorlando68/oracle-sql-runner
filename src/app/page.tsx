@@ -183,6 +183,53 @@ export default function Home() {
   // Metadata Right Panel States
   const [showMetadataPanel, setShowMetadataPanel] = useState(true);
   const [metadataSchema, setMetadataSchema] = useState<string>('');
+
+  // Split screen states
+  const [splitMode, setSplitMode] = useState<'none' | 'vertical' | 'horizontal'>('none');
+  const [secondaryActiveTabId, setSecondaryActiveTabId] = useState<string | null>(null);
+  const [activeEditorSide, setActiveEditorSide] = useState<'primary' | 'secondary'>('primary');
+
+  const secondaryEditorRef = useRef<any>(null);
+
+  const handleSplitVerticalRef = useRef<() => void>(() => {});
+  const handleSplitHorizontalRef = useRef<() => void>(() => {});
+  const handleUnsplitRef = useRef<() => void>(() => {});
+
+  const getCurrentEditor = () => {
+    return (splitMode !== 'none' && activeEditorSide === 'secondary')
+      ? secondaryEditorRef.current
+      : editorRef.current;
+  };
+
+  // Synchronize layout handler refs for Monaco context menu actions
+  useEffect(() => {
+    handleSplitVerticalRef.current = () => {
+      setSplitMode('vertical');
+      if (!secondaryActiveTabId || secondaryActiveTabId === activeTabId) {
+        const otherTab = tabs.find(t => t.id !== activeTabId);
+        if (otherTab) {
+          setSecondaryActiveTabId(otherTab.id);
+        } else {
+          setSecondaryActiveTabId(activeTabId);
+        }
+      }
+    };
+    handleSplitHorizontalRef.current = () => {
+      setSplitMode('horizontal');
+      if (!secondaryActiveTabId || secondaryActiveTabId === activeTabId) {
+        const otherTab = tabs.find(t => t.id !== activeTabId);
+        if (otherTab) {
+          setSecondaryActiveTabId(otherTab.id);
+        } else {
+          setSecondaryActiveTabId(activeTabId);
+        }
+      }
+    };
+    handleUnsplitRef.current = () => {
+      setSplitMode('none');
+      setActiveEditorSide('primary');
+    };
+  }, [activeTabId, secondaryActiveTabId, tabs]);
   const [metadataSchemas, setMetadataSchemas] = useState<string[]>([]);
   const [isLoadingMetadataSchemas, setIsLoadingMetadataSchemas] = useState(false);
   const [metadataTable, setMetadataTable] = useState<string>('');
@@ -265,6 +312,18 @@ export default function Home() {
 
   const handleCloseAllTabs = () => {
     startClosingQueue(tabs);
+  };
+
+  const handleTabClick = (tabId: string) => {
+    if (splitMode === 'none') {
+      setActiveTab(tabId);
+    } else {
+      if (activeEditorSide === 'primary') {
+        setActiveTab(tabId);
+      } else {
+        setSecondaryActiveTabId(tabId);
+      }
+    }
   };
 
   const handleTabContextMenu = (e: React.MouseEvent, tab: SqlTab) => {
@@ -363,31 +422,37 @@ export default function Home() {
 
   const activeConnection = connections.find(c => c.id === activeConnectionId);
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
+  const secondaryActiveTab = tabs.find(t => t.id === secondaryActiveTabId) || tabs[0];
+
+  const currentFocusedTab = (splitMode !== 'none' && activeEditorSide === 'secondary')
+    ? secondaryActiveTab
+    : activeTab;
+
   // Favorite linked to the current tab (if any)
 
   // Update PL/SQL outline when query changes
   useEffect(() => {
-    if (activeTab?.query) {
-      const outline = generatePlsqlOutline(activeTab.query);
+    if (currentFocusedTab?.query) {
+      const outline = generatePlsqlOutline(currentFocusedTab.query);
       setPlsqlOutline(outline);
     } else {
       setPlsqlOutline([]);
     }
-  }, [activeTab?.query]);
+  }, [currentFocusedTab?.query]);
 
   // Update F4 trigger ref on every render to ensure fresh states
   triggerDescribeObjectRef.current = (name: string) => {
     setDescribeObjectName(name);
     setIsDescribeOpen(true);
   };
-  const activeFavorite = activeTab?.favoriteId
-    ? favorites.find(f => f.id === activeTab.favoriteId)
+  const activeFavorite = currentFocusedTab?.favoriteId
+    ? favorites.find(f => f.id === currentFocusedTab.favoriteId)
     : null;
 
   // Insert text into the editor at the cursor position
   const insertTextAtCursor = (text: string) => {
-    if (editorRef.current && monacoRef.current) {
-      const editor = editorRef.current;
+    const editor = getCurrentEditor();
+    if (editor && monacoRef.current) {
       const selection = editor.getSelection();
       const range = new monacoRef.current.Range(
         selection.startLineNumber,
@@ -1001,12 +1066,143 @@ export default function Home() {
         useAppStore.getState().showToast('Líneas en blanco eliminadas', 'success');
       }
     });
+
+    // Monaco right-click context menu custom actions for splitting the editor
+    editor.addAction({
+      id: 'split-editor-vertical',
+      label: 'Dividir Pantalla Verticalmente',
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 1.1,
+      run: () => {
+        handleSplitVerticalRef.current();
+      }
+    });
+
+    editor.addAction({
+      id: 'split-editor-horizontal',
+      label: 'Dividir Pantalla Horizontalmente',
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 1.2,
+      run: () => {
+        handleSplitHorizontalRef.current();
+      }
+    });
+
+    editor.addAction({
+      id: 'unsplit-editor',
+      label: 'Volver a estado normal',
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 1.3,
+      run: () => {
+        handleUnsplitRef.current();
+      }
+    });
+  };
+
+  const handleSecondaryEditorDidMount = (editor: any, monaco: any) => {
+    secondaryEditorRef.current = editor;
+
+    // Ctrl+Enter → Execute (legacy)
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      executeStatementRef.current();
+    });
+
+    // F9 → Execute current statement / selection
+    editor.addCommand(monaco.KeyCode.F9, () => {
+      executeStatementRef.current();
+    });
+
+    // F5 → Execute entire script
+    editor.addCommand(monaco.KeyCode.F5, () => {
+      executeScriptRef.current();
+    });
+
+    // Ctrl+F → Find
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
+      editor.trigger('keyboard', 'actions.find', null);
+    });
+
+    // Ctrl+R → Replace
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, () => {
+      editor.trigger('keyboard', 'editor.action.startFindReplaceAction', null);
+    });
+
+    // F4 → Describe selected object or word under cursor
+    editor.addCommand(monaco.KeyCode.F4, () => {
+      const selection = editor.getSelection();
+      const model = editor.getModel();
+      if (model && selection) {
+        const selectedText = model.getValueInRange(selection).trim();
+        if (selectedText) {
+          triggerDescribeObjectRef.current(selectedText);
+        } else {
+          const position = editor.getPosition();
+          if (position) {
+            const word = model.getWordAtPosition(position);
+            if (word && word.word) {
+              triggerDescribeObjectRef.current(word.word);
+            } else {
+              useAppStore.getState().showToast("Selecciona el nombre de un objeto primero o coloca el cursor sobre él", "info");
+            }
+          }
+        }
+      }
+    });
+
+    // Ctrl+B → Remove blank lines
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, () => {
+      const model = editor.getModel();
+      if (model) {
+        const value = model.getValue();
+        const cleaned = value.split('\n').filter((line: string) => line.trim() !== '').join('\n');
+        
+        editor.executeEdits('remove-blank-lines', [{
+          range: model.getFullModelRange(),
+          text: cleaned,
+          forceMoveMarkers: true
+        }]);
+        
+        useAppStore.getState().showToast('Líneas en blanco eliminadas', 'success');
+      }
+    });
+
+    // Monaco right-click context menu custom actions for splitting the editor
+    editor.addAction({
+      id: 'split-editor-vertical',
+      label: 'Dividir Pantalla Verticalmente',
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 1.1,
+      run: () => {
+        handleSplitVerticalRef.current();
+      }
+    });
+
+    editor.addAction({
+      id: 'split-editor-horizontal',
+      label: 'Dividir Pantalla Horizontalmente',
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 1.2,
+      run: () => {
+        handleSplitHorizontalRef.current();
+      }
+    });
+
+    editor.addAction({
+      id: 'unsplit-editor',
+      label: 'Volver a estado normal',
+      contextMenuGroupId: '1_modification',
+      contextMenuOrder: 1.3,
+      run: () => {
+        handleUnsplitRef.current();
+      }
+    });
   };
 
   const handleFormat = () => {
     try {
-      const formatted = format(activeTab.query, formatOptions as any);
-      updateTabContent(activeTab.id, formatted);
+      const targetTab = currentFocusedTab;
+      const formatted = format(targetTab.query, formatOptions as any);
+      updateTabContent(targetTab.id, formatted);
     } catch (e) {
       console.error('Format error', e);
     }
@@ -1022,14 +1218,14 @@ export default function Home() {
 
   const handleOverwriteConfirm = () => {
     if (activeFavorite) {
-      updateFavoriteSql(activeFavorite.id, activeTab.query);
+      updateFavoriteSql(activeFavorite.id, currentFocusedTab.query);
       setSaveModal(null);
       useAppStore.getState().showToast(`"${activeFavorite.name}" actualizado`, 'success');
     }
   };
 
   const handleNewFavoriteConfirm = (name: string, sectionId: string) => {
-    addFavoriteFromSql(activeTab.query, name, sectionId);
+    addFavoriteFromSql(currentFocusedTab.query, name, sectionId);
     setSaveModal(null);
     useAppStore.getState().showToast(`"${name}" guardado en favoritos`, 'success');
   };
@@ -1042,7 +1238,7 @@ export default function Home() {
       return;
     }
     
-    const editor = editorRef.current;
+    const editor = getCurrentEditor();
     if (!editor) return;
 
     const selection = editor.getSelection();
@@ -1078,8 +1274,8 @@ export default function Home() {
       return;
     }
 
-    const editor = editorRef.current;
-    const fullText = editor ? editor.getModel().getValue() : activeTab.query;
+    const editor = getCurrentEditor();
+    const fullText = editor ? editor.getModel().getValue() : currentFocusedTab.query;
     if (!fullText.trim()) return;
 
     const statements = splitStatements(fullText);
@@ -1233,7 +1429,7 @@ export default function Home() {
       return;
     }
 
-    const editor = editorRef.current;
+    const editor = getCurrentEditor();
     if (!editor) return;
 
     const selection = editor.getSelection();
@@ -1362,7 +1558,7 @@ export default function Home() {
       return;
     }
 
-    const editor = editorRef.current;
+    const editor = getCurrentEditor();
     if (!editor) return;
 
     const selection = editor.getSelection();
@@ -1615,7 +1811,7 @@ export default function Home() {
 
   // ── Undo / Redo ────────────────────────────────────────────────────────────
   const handleUndo = () => {
-    const editor = editorRef.current;
+    const editor = getCurrentEditor();
     if (editor) {
       editor.focus();
       editor.trigger('toolbar', 'undo', null);
@@ -1623,7 +1819,7 @@ export default function Home() {
   };
 
   const handleRedo = () => {
-    const editor = editorRef.current;
+    const editor = getCurrentEditor();
     if (editor) {
       editor.focus();
       editor.trigger('toolbar', 'redo', null);
@@ -1632,21 +1828,21 @@ export default function Home() {
 
   // ── Clipboard ──────────────────────────────────────────────────────────────
   const handleCut = () => {
-    const editor = editorRef.current;
+    const editor = getCurrentEditor();
     if (editor) {
       editor.focus();
       editor.trigger('toolbar', 'editor.action.clipboardCutAction', null);
     }
   };
   const handleCopy = () => {
-    const editor = editorRef.current;
+    const editor = getCurrentEditor();
     if (editor) {
       editor.focus();
       editor.trigger('toolbar', 'editor.action.clipboardCopyAction', null);
     }
   };
   const handlePaste = async () => {
-    const editor = editorRef.current;
+    const editor = getCurrentEditor();
     if (editor) {
       try {
         const text = await navigator.clipboard.readText();
@@ -1739,7 +1935,7 @@ export default function Home() {
   };
 
   const handleGoToErrorLine = (line: number, position: number) => {
-    const editor = editorRef.current;
+    const editor = getCurrentEditor();
     if (editor) {
       editor.focus();
       editor.revealLineInCenter(line);
@@ -1776,7 +1972,7 @@ export default function Home() {
 
           {/* ── Group: New / Clear ── */}
           <TbBtn isDark={isDark} icon={<FilePlus className={iconSize} />} label="Nuevo Tab" onClick={() => addTab({ id: crypto.randomUUID(), title: 'Query', query: '' })} />
-          <TbBtn isDark={isDark} icon={<Eraser className={iconSize} />} label="Limpiar" onClick={() => updateTabContent(activeTab.id, '')} />
+          <TbBtn isDark={isDark} icon={<Eraser className={iconSize} />} label="Limpiar" onClick={() => updateTabContent(currentFocusedTab.id, '')} />
 
           <TbSep isDark={isDark} />
 
@@ -1943,26 +2139,49 @@ export default function Home() {
 
         {/* Tabs Bar */}
         <div className={`flex items-center px-2 pt-2 border-b overflow-x-auto custom-scrollbar ${isDark ? 'border-gray-800 bg-gray-900/20' : 'border-gray-200 bg-gray-50'}`}>
-          {tabs.map((tab, idx) => (
-            <div 
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              onContextMenu={(e) => handleTabContextMenu(e, tab)}
-              className={`flex items-center gap-2 px-3 py-1.5 text-sm border-t border-l border-r rounded-t-lg cursor-pointer max-w-[200px] ${
-                activeTab.id === tab.id 
-                  ? (isDark ? 'bg-gray-950 border-gray-800 text-blue-400' : 'bg-white border-gray-200 text-blue-600') 
-                  : (isDark ? 'bg-transparent border-transparent opacity-60 hover:opacity-100 hover:bg-gray-800' : 'bg-transparent border-transparent opacity-60 hover:opacity-100 hover:bg-gray-200')
-              }`}
-            >
-              <span className="truncate">{tab.title} {idx + 1}</span>
-              <button 
-                onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
-                className="p-0.5 rounded-md hover:bg-black/10 opacity-50 hover:opacity-100"
+          {tabs.map((tab, idx) => {
+            const isPrimaryActive = tab.id === activeTab.id;
+            const isSecondaryActive = splitMode !== 'none' && tab.id === secondaryActiveTabId;
+
+            let tabClass = '';
+            if (isPrimaryActive) {
+              tabClass = isDark ? 'bg-gray-950 border-gray-800 text-blue-400 ring-t-2 ring-blue-500/20' : 'bg-white border-gray-200 text-blue-600 ring-t-2 ring-blue-500/10';
+            } else if (isSecondaryActive) {
+              tabClass = isDark ? 'bg-gray-950 border-gray-800 text-indigo-400 border-dashed ring-t-2 ring-indigo-500/20' : 'bg-white border-gray-200 text-indigo-600 border-dashed ring-t-2 ring-indigo-500/10';
+            } else {
+              tabClass = isDark ? 'bg-transparent border-transparent opacity-60 hover:opacity-100 hover:bg-gray-800' : 'bg-transparent border-transparent opacity-60 hover:opacity-100 hover:bg-gray-200';
+            }
+
+            return (
+              <div 
+                key={tab.id}
+                onClick={() => handleTabClick(tab.id)}
+                onContextMenu={(e) => handleTabContextMenu(e, tab)}
+                className={`flex items-center gap-2 px-3 py-1.5 text-sm border-t border-l border-r rounded-t-lg cursor-pointer max-w-[200px] transition-all relative ${tabClass}`}
               >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
+                <span className="truncate">{tab.title} {idx + 1}</span>
+                
+                {splitMode !== 'none' && (isPrimaryActive || isSecondaryActive) && (
+                  <span className={`text-[9px] px-1 rounded font-bold shrink-0 ${
+                    isPrimaryActive
+                      ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                      : 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                  }`}>
+                    {isPrimaryActive 
+                      ? (splitMode === 'vertical' ? 'Izq' : 'Sup') 
+                      : (splitMode === 'vertical' ? 'Der' : 'Inf')}
+                  </span>
+                )}
+
+                <button 
+                  onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
+                  className="p-0.5 rounded-md hover:bg-black/10 opacity-50 hover:opacity-100"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            );
+          })}
           <button 
             onClick={() => addTab({ id: crypto.randomUUID(), title: 'Query', query: '' })}
             className="ml-2 p-1 rounded hover:bg-black/10 opacity-60 hover:opacity-100 mb-1"
@@ -2028,25 +2247,85 @@ export default function Home() {
             </button>
           )}
 
-          <div className="flex-1 min-w-0 h-full">
-            <Editor
-              height="100%"
-              defaultLanguage="sql"
-              theme={isDark ? 'vs-dark' : 'light'}
-              value={activeTab.query}
-              onChange={(val) => updateTabContent(activeTab.id, val || '')}
-              onMount={handleEditorDidMount}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 14,
-                fontFamily: 'JetBrains Mono, Consolas, monospace',
-                lineHeight: 24,
-                padding: { top: 16, bottom: 16 },
-                scrollBeyondLastLine: false,
-                smoothScrolling: true,
-                cursorBlinking: 'smooth',
+          <div className={`flex-1 min-w-0 h-full flex ${
+            splitMode === 'vertical' ? 'flex-row' : splitMode === 'horizontal' ? 'flex-col' : ''
+          }`}>
+            {/* Primary Editor Pane */}
+            <div 
+              onClick={() => {
+                if (splitMode !== 'none') setActiveEditorSide('primary');
               }}
-            />
+              className={`flex-1 min-w-0 h-full relative transition-all duration-200 ${
+                splitMode !== 'none' && activeEditorSide === 'primary'
+                  ? 'ring-1 ring-blue-500/40 bg-blue-500/5 dark:bg-blue-500/2'
+                  : ''
+              }`}
+            >
+              <Editor
+                height="100%"
+                defaultLanguage="sql"
+                theme={isDark ? 'vs-dark' : 'light'}
+                value={activeTab.query}
+                onChange={(val) => updateTabContent(activeTab.id, val || '')}
+                onMount={handleEditorDidMount}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  fontFamily: 'JetBrains Mono, Consolas, monospace',
+                  lineHeight: 24,
+                  padding: { top: 16, bottom: 16 },
+                  scrollBeyondLastLine: false,
+                  smoothScrolling: true,
+                  cursorBlinking: 'smooth',
+                }}
+              />
+              {/* Active Indicator Bar */}
+              {splitMode !== 'none' && activeEditorSide === 'primary' && (
+                <div className="absolute top-0 left-0 right-0 h-0.5 bg-blue-500 z-10 animate-fade-in" />
+              )}
+            </div>
+
+            {/* Split Separator Line */}
+            {splitMode !== 'none' && (
+              <div className={`shrink-0 bg-gray-200 dark:bg-gray-800 transition-colors ${
+                splitMode === 'vertical' ? 'w-[2px] h-full' : 'h-[2px] w-full'
+              }`} />
+            )}
+
+            {/* Secondary Editor Pane */}
+            {splitMode !== 'none' && (
+              <div 
+                onClick={() => setActiveEditorSide('secondary')}
+                className={`flex-1 min-w-0 h-full relative transition-all duration-200 ${
+                  activeEditorSide === 'secondary'
+                    ? 'ring-1 ring-indigo-500/40 bg-indigo-500/5 dark:bg-indigo-500/2'
+                    : ''
+                }`}
+              >
+                <Editor
+                  height="100%"
+                  defaultLanguage="sql"
+                  theme={isDark ? 'vs-dark' : 'light'}
+                  value={secondaryActiveTab.query}
+                  onChange={(val) => updateTabContent(secondaryActiveTab.id, val || '')}
+                  onMount={handleSecondaryEditorDidMount}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 14,
+                    fontFamily: 'JetBrains Mono, Consolas, monospace',
+                    lineHeight: 24,
+                    padding: { top: 16, bottom: 16 },
+                    scrollBeyondLastLine: false,
+                    smoothScrolling: true,
+                    cursorBlinking: 'smooth',
+                  }}
+                />
+                {/* Active Indicator Bar */}
+                {activeEditorSide === 'secondary' && (
+                  <div className="absolute top-0 left-0 right-0 h-0.5 bg-indigo-500 z-10 animate-fade-in" />
+                )}
+              </div>
+            )}
           </div>
 
           {showMetadataPanel && (
