@@ -130,7 +130,8 @@ export default function Home() {
     tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent, formatOptions,
     favorites, favoriteSections, addFavoriteFromSql, updateFavoriteSql, addFavoriteSection,
     toast, hideToast, showToast,
-    history, historyRetentionDays, setHistoryRetentionDays, purgeExpiredHistory
+    history, historyRetentionDays, setHistoryRetentionDays, purgeExpiredHistory,
+    inactivityTimeoutEnabled, inactivityTimeoutMinutes, setInactivitySettings
   } = useAppStore();
   
   const [isExecuting, setIsExecuting] = useState(false);
@@ -312,6 +313,44 @@ export default function Home() {
       editor.focus();
     }
   };
+
+  // Inactivity timeout tracker (default 60 minutes)
+  useEffect(() => {
+    if (!isAuthenticated || !inactivityTimeoutEnabled) return;
+
+    let timeoutId: any;
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      
+      const ms = inactivityTimeoutMinutes * 60 * 1000;
+      timeoutId = setTimeout(() => {
+        logout();
+        useAppStore.getState().showToast('Sesión cerrada por inactividad', 'info');
+      }, ms);
+    };
+
+    const handleActivity = () => {
+      resetTimer();
+    };
+
+    // User activity events
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    
+    events.forEach(event => {
+      window.addEventListener(event, handleActivity);
+    });
+
+    // Initial timer trigger
+    resetTimer();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      events.forEach(event => {
+        window.removeEventListener(event, handleActivity);
+      });
+    };
+  }, [isAuthenticated, inactivityTimeoutEnabled, inactivityTimeoutMinutes, logout]);
 
   // Fetch schemas for active connection
   useEffect(() => {
@@ -2210,10 +2249,20 @@ export default function Home() {
         isDark={isDark}
         currentDays={historyRetentionDays}
         historyCount={history.length}
-        onSave={(days) => setHistoryRetentionDays(days)}
+        inactivityEnabled={inactivityTimeoutEnabled}
+        inactivityMinutes={inactivityTimeoutMinutes}
+        onSave={(days, inactivityEnabled, inactivityMinutes) => {
+          setHistoryRetentionDays(days);
+          setInactivitySettings(inactivityEnabled, inactivityMinutes);
+          useAppStore.getState().showToast('Configuraciones guardadas', 'success');
+        }}
         onPurge={() => {
           purgeExpiredHistory();
           useAppStore.getState().showToast('Historial expirado eliminado', 'success');
+        }}
+        onClearAll={() => {
+          useAppStore.getState().clearHistory();
+          useAppStore.getState().showToast('Todo el historial ha sido eliminado', 'info');
         }}
         onClose={() => setHistorySettingsOpen(false)}
       />

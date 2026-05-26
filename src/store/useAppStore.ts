@@ -19,6 +19,9 @@ interface AppState {
   favoriteSections: FavoriteSection[];
   isDark: boolean;
   visibleObjectTypes: string[];
+  inactivityTimeoutEnabled: boolean;
+  inactivityTimeoutMinutes: number;
+  setInactivitySettings: (enabled: boolean, minutes: number) => void;
 
   tabs: SqlTab[];
   activeTabId: string;
@@ -92,6 +95,9 @@ export const useAppStore = create<AppState>()(
         return false;
       },
       logout: () => set({ isAuthenticated: false }),
+      inactivityTimeoutEnabled: true,
+      inactivityTimeoutMinutes: 60,
+      setInactivitySettings: (enabled, minutes) => set({ inactivityTimeoutEnabled: enabled, inactivityTimeoutMinutes: minutes }),
       connections: [],
       activeConnectionId: null,
       history: [],
