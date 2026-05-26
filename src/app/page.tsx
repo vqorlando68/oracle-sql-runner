@@ -146,6 +146,15 @@ export default function Home() {
   const [result, setResult] = useState<ExecResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [compileErrors, setCompileErrors] = useState<{ line: number; position: number; text: string }[]>([]);
+  
+  // States for query results pagination/incremental loading
+  const [hasMoreRows, setHasMoreRows] = useState(false);
+  const [currentOffset, setCurrentOffset] = useState(0);
+  const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
+  const [lastBinds, setLastBinds] = useState<any>({});
+  const [lastBindTypes, setLastBindTypes] = useState<any>({});
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
   const [paramsModalOpen, setParamsModalOpen] = useState(false);
   const [detectedParams, setDetectedParams] = useState<string[]>([]);
   const [enableDbmsOutput, setEnableDbmsOutput] = useState(false);
@@ -1313,6 +1322,13 @@ export default function Home() {
 
   // ── Execute single SQL ─────────────────────────────────────────────────────
   const executeSql = async (query: string, binds: Record<string, any>, bindTypes?: Record<string, string>) => {
+    // Reset pagination states before execution
+    setHasMoreRows(false);
+    setCurrentOffset(0);
+    setLastExecutedSql(query);
+    setLastBinds(binds);
+    setLastBindTypes(bindTypes);
+
     const controller = startExecution('statement', query);
 
     try {
@@ -1324,7 +1340,9 @@ export default function Home() {
           sql: query,
           binds,
           bindTypes,
-          enableDbmsOutput
+          enableDbmsOutput,
+          offset: 0,
+          limit: 200
         }),
         signal: controller.signal
       });
@@ -1341,6 +1359,10 @@ export default function Home() {
       } else {
         setBottomTab('results');
       }
+
+      // If returned rows are exactly 200, there could be more
+      const rowCount = data.rows ? data.rows.length : 0;
+      setHasMoreRows(rowCount === 200);
 
       addHistory({
         id: crypto.randomUUID(),
@@ -1409,6 +1431,58 @@ export default function Home() {
       endExecution();
     }
   };
+
+  const handleLoadMore = async () => {
+    if (!activeConnection || !lastExecutedSql || isLoadingMore) return;
+    
+    setIsLoadingMore(true);
+    const nextOffset = currentOffset + 200;
+    const controller = new AbortController();
+
+    try {
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: lastExecutedSql,
+          binds: lastBinds,
+          bindTypes: lastBindTypes,
+          enableDbmsOutput: false,
+          offset: nextOffset,
+          limit: 200
+        }),
+        signal: controller.signal
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to load more rows');
+      }
+
+      const newRows = data.rows || [];
+      
+      setResult(prev => {
+        if (!prev) return data;
+        return {
+          ...prev,
+          rows: [...prev.rows, ...newRows],
+          duration: prev.duration + (data.duration || 0),
+          rowCount: prev.rows.length + newRows.length
+        };
+      });
+
+      setCurrentOffset(nextOffset);
+      setHasMoreRows(newRows.length === 200);
+      
+      useAppStore.getState().showToast(`Se cargaron ${newRows.length} registros más`, 'success');
+    } catch (err: any) {
+      useAppStore.getState().showToast(`Error al cargar más: ${err.message}`, 'error');
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
 
   // ── COMMIT / ROLLBACK ──────────────────────────────────────────────────────
   const handleCommit = async () => {
@@ -2117,7 +2191,14 @@ export default function Home() {
                     </div>
                   </div>
                 ) : result ? (
-                  <ResultsTable data={result.rows} columns={result.columns} sql={activeTab.query} />
+                  <ResultsTable 
+                    data={result.rows} 
+                    columns={result.columns} 
+                    sql={activeTab.query} 
+                    hasMore={hasMoreRows}
+                    isLoadingMore={isLoadingMore}
+                    onLoadMore={handleLoadMore}
+                  />
                 ) : (
                   <div className="h-full flex items-center justify-center opacity-30 text-sm flex-col gap-2">
                     <Database className="w-8 h-8 mb-2 opacity-50" />

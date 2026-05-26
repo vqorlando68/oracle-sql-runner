@@ -51,9 +51,12 @@ interface Props {
   data: any[];
   columns: string[];
   sql?: string;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
-export default function ResultsTable({ data, columns, sql }: Props) {
+export default function ResultsTable({ data, columns, sql, hasMore = false, isLoadingMore = false, onLoadMore }: Props) {
   const { isDark, exportOptions, gridOptions, showToast } = useAppStore();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -353,6 +356,27 @@ export default function ResultsTable({ data, columns, sql }: Props) {
           <button onClick={() => table.setPageIndex(table.getPageCount() - 1)} disabled={!table.getCanNextPage()} className="p-1 rounded hover:bg-black/10 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
         </div>
         
+        {hasMore && (
+          <button
+            onClick={onLoadMore}
+            disabled={isLoadingMore}
+            className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 shadow-sm active:scale-[0.98] ${
+              isDark 
+                ? 'bg-blue-600/80 hover:bg-blue-600 text-white disabled:bg-blue-800/40 disabled:text-gray-400 border border-blue-500/30' 
+                : 'bg-blue-500 hover:bg-blue-600 text-white disabled:bg-blue-300 disabled:text-gray-100 border border-blue-400/20'
+            }`}
+          >
+            {isLoadingMore ? (
+              <>
+                <span className="inline-block w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                <span>Cargando...</span>
+              </>
+            ) : (
+              <span>Cargar más registros (+200)</span>
+            )}
+          </button>
+        )}
+
         <select
           value={table.getState().pagination.pageSize}
           onChange={e => table.setPageSize(Number(e.target.value))}

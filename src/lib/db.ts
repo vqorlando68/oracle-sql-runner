@@ -100,6 +100,14 @@ export async function closeSession(connectionParams: any): Promise<void> {
   }
 }
 
+function isSelectQuery(sql: string): boolean {
+  const clean = sql
+    .replace(/--.*$/gm, '') // single-line comments
+    .replace(/\/\*[\s\S]*?\*\//g, '') // multi-line comments
+    .trim();
+  return /^(SELECT|WITH)\b/i.test(clean);
+}
+
 // ── Query Execution ─────────────────────────────────────────────────────────────
 export async function executeOracleQuery(
   connectionParams: any,
@@ -107,7 +115,9 @@ export async function executeOracleQuery(
   binds: any = {},
   enableDbmsOutput: boolean = false,
   bindTypes?: Record<string, string>,
-  autoCommit: boolean = false
+  autoCommit: boolean = false,
+  offset?: number,
+  limit?: number
 ) {
   let connection: oracledb.Connection;
   try {
@@ -116,6 +126,11 @@ export async function executeOracleQuery(
     if (enableDbmsOutput) {
       await connection.execute(`BEGIN DBMS_OUTPUT.ENABLE(NULL); END;`);
     }
+
+    const isSelect = isSelectQuery(sql);
+    const isPaginated = isSelect && offset !== undefined && limit !== undefined;
+
+    let sqlToExecute = sql;
 
     // Process bindTypes if provided
     const processedBinds = { ...binds };
@@ -133,13 +148,26 @@ export async function executeOracleQuery(
       });
     }
 
+    if (isPaginated) {
+      const cleanedSql = sql.trim().replace(/;+$/, '');
+      sqlToExecute = `
+        SELECT * FROM (
+          SELECT a.*, ROWNUM RNUM_PAG_TEMP FROM (
+            ${cleanedSql}
+          ) a WHERE ROWNUM <= :p_max_row
+        ) WHERE RNUM_PAG_TEMP > :p_min_row
+      `;
+      processedBinds.p_max_row = offset! + limit!;
+      processedBinds.p_min_row = offset!;
+    }
+
     const options: oracledb.ExecuteOptions = {};
     if (autoCommit) {
       options.autoCommit = true;
     }
 
     const startTime = Date.now();
-    const result = await connection.execute(sql, processedBinds, options);
+    const result = await connection.execute(sqlToExecute, processedBinds, options);
     const duration = Date.now() - startTime;
 
     let dbmsOutput: string[] | undefined = undefined;
@@ -164,14 +192,27 @@ export async function executeOracleQuery(
     const metaData = result.metaData || [];
     const columns = metaData.map((col: any) => col.name);
     
+    let processedRows = rows;
+    let processedColumns = columns;
+
+    if (isPaginated) {
+      processedColumns = columns.filter((col: any) => col.toUpperCase() !== 'RNUM_PAG_TEMP');
+      processedRows = rows.map((row: any) => {
+        const newRow = { ...row };
+        delete newRow.RNUM_PAG_TEMP;
+        delete newRow.rnum_pag_temp;
+        return newRow;
+      });
+    }
+
     // For DML — NO auto-commit — user must COMMIT/ROLLBACK explicitly
     const rowsAffected = result.rowsAffected || 0;
 
     return {
-      rows: safeSerialize(rows),
-      columns,
+      rows: safeSerialize(processedRows),
+      columns: processedColumns,
       duration,
-      rowCount: rows.length || rowsAffected,
+      rowCount: processedRows.length || rowsAffected,
       rowsAffected,
       dbmsOutput
     };
