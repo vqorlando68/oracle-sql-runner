@@ -19,7 +19,7 @@ import {
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
   Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare, Eye, EyeOff,
   ChevronDown, ChevronUp, Maximize2, Minimize2, RefreshCw, Folder, ChevronRight,
-  Package, LogOut
+  Package, LogOut, Key, Mail, Phone, ExternalLink, Copy, Sparkles, Code2, Cpu
 } from 'lucide-react';
 import { ExecResult } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
@@ -185,6 +185,7 @@ export default function Home() {
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState(false);
   const [shake, setShake] = useState(false);
+  const [isRequestKeyOpen, setIsRequestKeyOpen] = useState(false);
 
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
@@ -455,12 +456,43 @@ export default function Home() {
       : 'bg-gradient-to-br from-blue-50 via-gray-50 to-gray-100 text-gray-800';
 
     return (
-      <main className={`flex h-screen w-full items-center justify-center overflow-hidden p-4 relative ${loginBg} font-sans transition-colors duration-300`}>
-        {/* Decoración ambiental: Esferas de luz difuminadas */}
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full bg-blue-500/10 dark:bg-blue-600/10 blur-[120px] pointer-events-none animate-pulse duration-[8s]" />
-        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] rounded-full bg-yellow-500/5 dark:bg-yellow-500/5 blur-[140px] pointer-events-none animate-pulse duration-[10s]" />
+      <main className={`flex min-h-screen w-full items-center justify-center overflow-y-auto p-4 md:p-8 relative ${loginBg} font-sans transition-colors duration-300`}>
+        {/* Malla Cyber 3D del fondo */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          {/* 3D Grid Perspective Viewport */}
+          <div className="absolute inset-0 origin-center" style={{ perspective: '800px', perspectiveOrigin: '50% 50%' }}>
+            {/* Cyber Grid element */}
+            <div 
+              className="absolute inset-x-[-50%] top-[10%] bottom-[-50%] opacity-20 dark:opacity-30 animate-grid-travel" 
+              style={{
+                backgroundImage: isDark 
+                  ? 'linear-gradient(to right, rgba(59,130,246,0.15) 1px, transparent 1px), linear-gradient(to bottom, rgba(59,130,246,0.15) 1px, transparent 1px)' 
+                  : 'linear-gradient(to right, rgba(59,130,246,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(59,130,246,0.08) 1px, transparent 1px)',
+                backgroundSize: '40px 40px',
+                transform: 'rotateX(65deg) translateZ(0)',
+                maskImage: 'linear-gradient(to top, rgba(0,0,0,1) 30%, rgba(0,0,0,0) 80%)',
+                WebkitMaskImage: 'linear-gradient(to top, rgba(0,0,0,1) 30%, rgba(0,0,0,0) 80%)'
+              }}
+            />
+          </div>
+          
+          {/* Esferas de luz ambiental */}
+          <div className="absolute -top-[20%] -left-[20%] w-[60%] h-[60%] rounded-full bg-blue-500/10 dark:bg-blue-600/10 blur-[130px] animate-pulse duration-[8s]" />
+          <div className="absolute -bottom-[20%] -right-[20%] w-[60%] h-[60%] rounded-full bg-purple-500/10 dark:bg-purple-600/10 blur-[130px] animate-pulse duration-[10s]" />
+          
+          {/* Nodos flotantes en el espacio de fondo */}
+          <div className="absolute top-[15%] left-[8%] p-3.5 bg-blue-500/10 border border-blue-500/20 rounded-full animate-float-node pointer-events-none hidden md:block" style={{ animationDelay: '0s' }}>
+            <Database className="w-5 h-5 text-blue-500/70 dark:text-blue-400/80" />
+          </div>
+          <div className="absolute top-[35%] right-[8%] p-3.5 bg-purple-500/10 border border-purple-500/20 rounded-full animate-float-node pointer-events-none hidden md:block" style={{ animationDelay: '2.5s' }}>
+            <Activity className="w-5 h-5 text-purple-500/70 dark:text-purple-400/80" />
+          </div>
+          <div className="absolute bottom-[15%] left-[12%] p-3.5 bg-teal-500/10 border border-teal-500/20 rounded-full animate-float-node pointer-events-none hidden md:block" style={{ animationDelay: '1.2s' }}>
+            <Network className="w-5 h-5 text-teal-500/70 dark:text-teal-400/80" />
+          </div>
+        </div>
         
-        {/* Estilo para animación de agitación (shake) */}
+        {/* Estilo para animación de agitación (shake) y transiciones escalonadas (staggered fade-in) */}
         <style>{`
           @keyframes shake {
             0%, 100% { transform: translateX(0); }
@@ -470,73 +502,305 @@ export default function Home() {
           .animate-shake {
             animation: shake 0.4s ease-in-out;
           }
+          @keyframes fadeInUp {
+            from {
+              opacity: 0;
+              transform: translateY(15px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+          .animate-fade-in-up {
+            opacity: 0;
+            animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          }
         `}</style>
 
-        <div className="w-full max-w-md relative z-10">
-          <form 
-            onSubmit={handleLoginSubmit}
-            className={`backdrop-blur-xl border flex flex-col items-center rounded-3xl p-8 shadow-2xl transition-all duration-300 transform scale-100 ${
-              shake ? 'animate-shake border-red-500 shadow-red-500/10' : ''
-            } ${
-              isDark 
-                ? 'bg-gray-900/60 border-gray-800/80 text-gray-200 shadow-black/60' 
-                : 'bg-white/75 border-gray-200/80 text-gray-800 shadow-gray-300/40'
-            }`}
-          >
-            {/* Logotipo / Icono */}
-            <div className={`p-4 rounded-2xl mb-6 shadow-inner ${
-              isDark ? 'bg-gray-950/40 text-blue-400' : 'bg-gray-100/80 text-blue-600'
-            }`}>
-              <Database className="w-8 h-8 animate-pulse text-blue-500 dark:text-blue-400" />
+        <div className="w-full max-w-5xl relative z-10 flex flex-col md:flex-row gap-8 items-stretch justify-center">
+          {/* Columna Izquierda: Presentación del Software */}
+          <div className={`flex-1 flex flex-col justify-between p-6 md:p-8 rounded-3xl backdrop-blur-xl border transition-colors duration-300 ${
+            isDark 
+              ? 'bg-gray-900/50 border-gray-800/80 text-gray-200 shadow-2xl shadow-black/30' 
+              : 'bg-white/60 border-gray-200/80 text-gray-800 shadow-2xl shadow-gray-200/20'
+          }`}>
+            <div className="space-y-4 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-2xl shadow-inner ${
+                  isDark ? 'bg-gray-950/60 text-blue-400' : 'bg-gray-100/90 text-blue-600'
+                }`}>
+                  <Sparkles className="w-6 h-6 text-blue-500 dark:text-blue-400" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-extrabold tracking-widest text-blue-500 uppercase">Herramienta Avanzada</span>
+                  <h2 className="text-xl font-bold tracking-tight">Oracle SQL Runner AI</h2>
+                </div>
+              </div>
+              
+              <p className="text-xs md:text-sm opacity-80 leading-relaxed">
+                Un entorno de desarrollo integrado diseñado para potenciar y simplificar la gestión de bases de datos Oracle. Escribe, ejecuta, modela y optimiza de forma profesional con una suite de herramientas de última generación.
+              </p>
             </div>
 
-            {/* Cabecera */}
-            <h1 className="text-2xl font-bold text-center tracking-tight">Oracle SQL Runner AI</h1>
-            <p className="text-xs opacity-60 mt-1 mb-8 text-center font-medium uppercase tracking-wider">Acceso Protegido</p>
+            {/* Características */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-6">
+              <div className={`p-4 rounded-2xl border transition-all hover:translate-y-[-2px] animate-fade-in-up ${
+                isDark ? 'bg-gray-950/40 border-gray-800/60 hover:border-blue-500/20' : 'bg-gray-50/80 border-gray-200/40 hover:border-blue-500/30'
+              }`} style={{ animationDelay: '300ms' }}>
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500 mt-0.5">
+                    <Code2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-blue-500">Editor PL/SQL</h3>
+                    <p className="text-[11px] opacity-70 mt-1 leading-snug">Editor inteligente con soporte para compilación, planes de ejecución y ejecución parcial de sentencias (F5/F9).</p>
+                  </div>
+                </div>
+              </div>
 
-            {/* Input de Clave */}
-            <div className="w-full space-y-2 mb-6">
-              <label className="text-xs font-semibold opacity-70 ml-1">Contraseña de acceso</label>
-              <div className="relative w-full">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  autoFocus
-                  placeholder="Ingresa la clave..."
-                  value={passwordInput}
-                  onChange={(e) => {
-                    setPasswordInput(e.target.value);
-                    if (loginError) setLoginError(false);
-                  }}
-                  className={`w-full py-3 pl-4 pr-12 rounded-2xl border text-sm font-medium transition-all outline-none text-center tracking-widest ${
-                    loginError 
-                      ? 'border-red-500 bg-red-500/5 focus:ring-2 focus:ring-red-500/20' 
-                      : isDark 
-                        ? 'border-gray-800 bg-gray-950/40 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20' 
-                        : 'border-gray-200 bg-gray-50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20'
-                  }`}
-                />
+              <div className={`p-4 rounded-2xl border transition-all hover:translate-y-[-2px] animate-fade-in-up ${
+                isDark ? 'bg-gray-950/40 border-gray-800/60 hover:border-indigo-500/20' : 'bg-gray-50/80 border-gray-200/40 hover:border-indigo-500/30'
+              }`} style={{ animationDelay: '450ms' }}>
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-indigo-500/10 rounded-xl text-indigo-500 mt-0.5">
+                    <Network className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-500">Modelo Relacional</h3>
+                    <p className="text-[11px] opacity-70 mt-1 leading-snug">Diseño visual de diagramas ERD, detección automática de claves foráneas y relaciones entre tablas del esquema.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className={`p-4 rounded-2xl border transition-all hover:translate-y-[-2px] animate-fade-in-up ${
+                isDark ? 'bg-gray-950/40 border-gray-800/60 hover:border-purple-500/20' : 'bg-gray-50/80 border-gray-200/40 hover:border-purple-500/30'
+              }`} style={{ animationDelay: '600ms' }}>
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-purple-500/10 rounded-xl text-purple-500 mt-0.5">
+                    <Database className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-purple-500">Explorador de Objetos</h3>
+                    <p className="text-[11px] opacity-70 mt-1 leading-snug">Visualiza más de 60 tipos de objetos (tablas, secuencias, jobs, triggers, directorios) con filtros dinámicos.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className={`p-4 rounded-2xl border transition-all hover:translate-y-[-2px] animate-fade-in-up ${
+                isDark ? 'bg-gray-950/40 border-gray-800/60 hover:border-teal-500/20' : 'bg-gray-50/80 border-gray-200/40 hover:border-teal-500/30'
+              }`} style={{ animationDelay: '750ms' }}>
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-teal-500/10 rounded-xl text-teal-500 mt-0.5">
+                    <BookmarkCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-teal-500">Sincronización</h3>
+                    <p className="text-[11px] opacity-70 mt-1 leading-snug">Guarda favoritos localmente o sincronízalos automáticamente en las tablas de tu base de datos Oracle.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Detalles del sistema */}
+            <div className="flex items-center justify-between text-[10px] opacity-50 border-t border-gray-500/15 pt-3 animate-fade-in-up" style={{ animationDelay: '900ms' }}>
+              <span>Tecnología Next.js + Tailwind CSS</span>
+              <span>Versión 2.0.0</span>
+            </div>
+          </div>
+
+          {/* Columna Derecha: Login */}
+          <div className="w-full md:w-[380px] flex flex-col justify-center animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+            <form 
+              onSubmit={handleLoginSubmit}
+              className={`backdrop-blur-xl border flex flex-col items-center rounded-3xl p-6 md:p-8 shadow-2xl transition-all duration-300 transform scale-100 w-full justify-between min-h-[380px] ${
+                shake ? 'animate-shake border-red-500 shadow-red-500/10' : ''
+              } ${
+                isDark 
+                  ? 'bg-gray-900/65 border-gray-800/80 text-gray-200 shadow-black/60' 
+                  : 'bg-white/75 border-gray-200/80 text-gray-800 shadow-gray-300/40'
+              }`}
+            >
+              <div className="w-full flex flex-col items-center">
+                {/* Logotipo / Icono */}
+                <div className={`p-4 rounded-2xl mb-6 shadow-inner ${
+                  isDark ? 'bg-gray-950/40 text-blue-400' : 'bg-gray-100/85 text-blue-600'
+                }`}>
+                  <div className="relative">
+                    <Cpu className="w-8 h-8 text-blue-500 dark:text-blue-400 animate-spin" style={{ animationDuration: '25s' }} />
+                    <Database className="w-4 h-4 text-indigo-500 dark:text-indigo-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+                  </div>
+                </div>
+
+                {/* Cabecera */}
+                <h1 className="text-xl font-bold text-center tracking-tight">Acceso al Sistema</h1>
+                <p className="text-[10px] opacity-60 mt-1 mb-8 text-center font-bold uppercase tracking-widest text-blue-500">Ingreso Autorizado</p>
+
+                {/* Input de Clave */}
+                <div className="w-full space-y-2 mb-6">
+                  <label className="text-xs font-semibold opacity-70 ml-1">Contraseña de acceso</label>
+                  <div className="relative w-full">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      autoFocus
+                      placeholder="Ingresa la clave..."
+                      value={passwordInput}
+                      onChange={(e) => {
+                        setPasswordInput(e.target.value);
+                        if (loginError) setLoginError(false);
+                      }}
+                      className={`w-full py-3 pl-4 pr-12 rounded-2xl border text-sm font-semibold transition-all outline-none text-center tracking-widest ${
+                        loginError 
+                          ? 'border-red-500 bg-red-500/5 focus:ring-2 focus:ring-red-500/20 text-red-500' 
+                          : isDark 
+                            ? 'border-gray-800 bg-gray-950/40 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20' 
+                            : 'border-gray-200 bg-gray-50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className={`absolute right-3.5 top-1/2 -translate-y-1/2 p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200`}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {loginError && (
+                    <p className="text-[11px] text-red-500 text-center font-semibold mt-1">Clave incorrecta. Inténtalo de nuevo.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="w-full space-y-3">
+                {/* Botón de Ingreso */}
+                <button
+                  type="submit"
+                  className="w-full py-3.5 px-4 rounded-2xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 active:scale-[0.98] transition-all cursor-pointer shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 flex items-center justify-center gap-2"
+                >
+                  Ingresar al Programa
+                </button>
+
+                {/* Botón de Solicitar Clave */}
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className={`absolute right-3.5 top-1/2 -translate-y-1/2 p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200`}
+                  onClick={() => setIsRequestKeyOpen(true)}
+                  className={`w-full py-3 px-4 rounded-2xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    isDark 
+                      ? 'border-gray-800 bg-gray-950/20 hover:bg-gray-950/50 text-gray-400 hover:text-gray-200' 
+                      : 'border-gray-200 bg-gray-50 hover:bg-gray-100/80 text-gray-600 hover:text-gray-800'
+                  }`}
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  <Key className="w-3.5 h-3.5 text-blue-500" />
+                  Solicitar Clave
                 </button>
               </div>
-              {loginError && (
-                <p className="text-[11px] text-red-500 text-center font-semibold mt-1">Clave incorrecta. Inténtalo de nuevo.</p>
-              )}
-            </div>
-
-            {/* Botón de Ingreso */}
-            <button
-              type="submit"
-              className="w-full py-3.5 px-4 rounded-2xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 active:scale-[0.98] transition-all cursor-pointer shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 flex items-center justify-center gap-2"
-            >
-              Ingresar al Programa
-            </button>
-          </form>
+            </form>
+          </div>
         </div>
+
+        {/* Modal de Solicitud de Clave */}
+        {isRequestKeyOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md transition-opacity duration-300">
+            <div className={`relative w-full max-w-md overflow-hidden rounded-3xl border shadow-2xl p-8 flex flex-col items-center text-center transition-all duration-300 transform scale-100 ${
+              isDark 
+                ? 'bg-gray-950/90 border-blue-500/20 text-gray-100 shadow-blue-500/5' 
+                : 'bg-white border-blue-200 text-gray-800 shadow-blue-500/10'
+            }`}>
+              
+              <div className="absolute top-4 right-4">
+                <button 
+                  onClick={() => setIsRequestKeyOpen(false)}
+                  className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer text-gray-400 hover:text-gray-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className={`p-3.5 rounded-2xl mb-5 shadow-inner ${
+                isDark ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'
+              }`}>
+                <Key className="w-7 h-7" />
+              </div>
+
+              <div className="space-y-1 mb-5">
+                <span className="text-[10px] font-bold tracking-widest text-blue-500 uppercase">Solicitud de Acceso</span>
+                <h3 className="text-lg font-black tracking-tight">
+                  Obtener Clave de Acceso
+                </h3>
+                <p className="text-xs opacity-75 mt-2 leading-relaxed">
+                  Por favor ponte en contacto con el desarrollador del aplicativo utilizando los siguientes medios para recibir tu contraseña:
+                </p>
+              </div>
+
+              {/* Información del Desarrollador */}
+              <div className="w-full space-y-3 mb-6 font-sans text-xs">
+                <div className={`p-4 rounded-2xl border text-left ${isDark ? 'bg-gray-900/40 border-gray-800/80' : 'bg-gray-50 border-gray-100'}`}>
+                  <div className="text-[10px] opacity-40 uppercase font-mono mb-1">Desarrollado por</div>
+                  <div className="font-extrabold text-sm">Orlando Arturo Valverde Quiceno</div>
+                </div>
+
+                <div className={`p-3 rounded-2xl border flex items-center justify-between group transition-colors ${isDark ? 'bg-gray-900/40 border-gray-800/80 hover:border-blue-500/20' : 'bg-gray-50 border-gray-100 hover:border-blue-200'}`}>
+                  <div className="flex items-center gap-2">
+                    <Mail className="w-3.5 h-3.5 text-blue-500" />
+                    <span className="opacity-40 text-[10px] uppercase font-mono">Correo</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-xs select-all">vqorlando@gmail.com</span>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText('vqorlando@gmail.com');
+                        useAppStore.getState().showToast('Correo copiado al portapapeles', 'success');
+                      }}
+                      className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-blue-500 cursor-pointer"
+                      title="Copiar correo"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className={`p-3 rounded-2xl border flex items-center justify-between group transition-colors ${isDark ? 'bg-gray-900/40 border-gray-800/80 hover:border-blue-500/20' : 'bg-gray-50 border-gray-100 hover:border-blue-200'}`}>
+                  <div className="flex items-center gap-2">
+                    <Phone className="w-3.5 h-3.5 text-blue-500" />
+                    <span className="opacity-40 text-[10px] uppercase font-mono">Teléfono</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-xs select-all">+57 316 8226095</span>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText('+573168226095');
+                        useAppStore.getState().showToast('Teléfono copiado al portapapeles', 'success');
+                      }}
+                      className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-blue-500 cursor-pointer"
+                      title="Copiar teléfono"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                    <a 
+                      href="https://wa.me/573168226095" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="p-1 rounded-lg hover:bg-green-500/10 text-green-500 cursor-pointer"
+                      title="Escribir por WhatsApp"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsRequestKeyOpen(false)}
+                className="w-full py-2.5 rounded-xl text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg shadow-blue-500/20 transition-all hover:shadow-blue-500/30 active:scale-[0.98] cursor-pointer"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        )}
       </main>
     );
   }

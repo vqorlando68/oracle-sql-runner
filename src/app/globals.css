@@ -6,6 +6,8 @@
   
   --animate-scanline: scanline 8s linear infinite;
   --animate-hud-scan: hud-scan 3s ease-in-out infinite;
+  --animate-grid-travel: grid-travel 25s linear infinite;
+  --animate-float-node: float-node 8s ease-in-out infinite;
 
   @keyframes scanline {
     0% { background-position: 0 0; }
@@ -14,6 +16,14 @@
   @keyframes hud-scan {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(110px); }
+  }
+  @keyframes grid-travel {
+    0% { background-position: 0 0; }
+    100% { background-position: 40px 40px; }
+  }
+  @keyframes float-node {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-20px) scale(1.05); }
   }
 }
 
