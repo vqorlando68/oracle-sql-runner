@@ -37,6 +37,7 @@ export interface Favorite {
   createdAt: string;
   lastRunAt?: string;
   dbId?: number;
+  connectionId?: string;
 }
 
 export interface HistoryRecord {

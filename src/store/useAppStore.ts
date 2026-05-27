@@ -55,6 +55,7 @@ interface AppState {
   updateFavoriteSql: (favoriteId: string, sql: string) => void;
   /** Call when user opens/runs a favorite – updates lastRunAt */
   runFavorite: (favoriteId: string) => void;
+  transferFavorites: (newFavs: Favorite[], overwrittenFavIds: string[]) => void;
 
   // Sections
   addFavoriteSection: (id: string, name: string) => void;
@@ -211,12 +212,26 @@ export const useAppStore = create<AppState>()(
         ),
       })),
 
-      clearAllFavorites: (deleteSections = false) => set((state) => ({
-        favorites: [],
-        favoriteSections: deleteSections ? DEFAULT_SECTIONS : state.favoriteSections,
-        // Clear links to favorites in history
-        history: state.history.map(h => ({ ...h, linkedFavoriteId: undefined })),
-      })),
+      clearAllFavorites: (deleteSections = false) => set((state) => {
+        const activeConnId = state.activeConnectionId;
+        const favoritesToKeep = state.favorites.filter(
+          f => f.connectionId && f.connectionId !== activeConnId
+        );
+        const removedFavoriteIds = new Set(
+          state.favorites
+            .filter(f => !f.connectionId || f.connectionId === activeConnId)
+            .map(f => f.id)
+        );
+        return {
+          favorites: favoritesToKeep,
+          favoriteSections: deleteSections ? DEFAULT_SECTIONS : state.favoriteSections,
+          history: state.history.map(h => 
+            h.linkedFavoriteId && removedFavoriteIds.has(h.linkedFavoriteId)
+              ? { ...h, linkedFavoriteId: undefined }
+              : h
+          ),
+        };
+      }),
 
       addFavoriteFromSql: (sql, name, sectionId) => set((state) => {
         const newFav: Favorite = {
@@ -240,6 +255,14 @@ export const useAppStore = create<AppState>()(
           f.id === favoriteId ? { ...f, lastRunAt: new Date().toISOString() } : f
         ),
       })),
+
+      transferFavorites: (newFavs, overwrittenFavIds) => set((state) => {
+        const overwrittenSet = new Set(overwrittenFavIds);
+        const filtered = state.favorites.filter(f => !overwrittenSet.has(f.id));
+        return {
+          favorites: [...filtered, ...newFavs]
+        };
+      }),
 
       // ── Sections ─────────────────────────────────────────────────────────────
       addFavoriteSection: (id, name) => set((state) => {
@@ -327,7 +350,9 @@ export const useAppStore = create<AppState>()(
             const lastRunAt = dbFav.LAST_RUN_AT || undefined;
 
             const existingIdx = currentFavorites.findIndex(
-              f => f.name.toLowerCase() === favName.toLowerCase() && f.sectionId === localSecId
+              f => f.name.toLowerCase() === favName.toLowerCase() && 
+                   f.sectionId === localSecId && 
+                   f.connectionId === connection.id
             );
 
             const mappedFav: Favorite = {
@@ -337,7 +362,8 @@ export const useAppStore = create<AppState>()(
               sectionId: localSecId,
               createdAt: typeof createdAt === 'string' ? createdAt : new Date(createdAt).toISOString(),
               lastRunAt: lastRunAt ? (typeof lastRunAt === 'string' ? lastRunAt : new Date(lastRunAt).toISOString()) : undefined,
-              dbId: dbFav.ID
+              dbId: dbFav.ID,
+              connectionId: connection.id
             };
 
             if (existingIdx >= 0) {
@@ -380,7 +406,9 @@ export const useAppStore = create<AppState>()(
           const dbSections = secData.rows || [];
 
           // 2. Identify missing sections and insert them
-          let localFavorites = useAppStore.getState().favorites;
+          let localFavorites = useAppStore.getState().favorites.filter(
+            fav => !fav.connectionId || fav.connectionId === connection.id
+          );
           if (selectedLocalFavoriteIds) {
             localFavorites = localFavorites.filter(fav => selectedLocalFavoriteIds.includes(fav.id));
           }
@@ -485,6 +513,9 @@ export const useAppStore = create<AppState>()(
             
             const currentFavorites = useAppStore.getState().favorites;
             const updatedFavorites = currentFavorites.map(fav => {
+              if (fav.connectionId && fav.connectionId !== connection.id) {
+                return fav;
+              }
               const localSec = localSections.find(s => s.id === fav.sectionId);
               const secName = localSec ? localSec.name.toLowerCase() : 'varios';
               
@@ -495,7 +526,7 @@ export const useAppStore = create<AppState>()(
               });
               
               if (match) {
-                return { ...fav, dbId: match.ID };
+                return { ...fav, dbId: match.ID, connectionId: connection.id };
               }
               return fav;
             });
