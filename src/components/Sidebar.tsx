@@ -216,7 +216,10 @@ export default function Sidebar() {
       const res = await fetch('/api/oracle/objects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection: activeConnection })
+        body: JSON.stringify({ 
+          connection: activeConnection,
+          visibleTypes: visibleObjectTypes
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error al obtener objetos');

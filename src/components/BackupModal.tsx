@@ -146,7 +146,8 @@ export default function BackupModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           connection: selectedConnection,
-          schema: selectedSchema
+          schema: selectedSchema,
+          visibleTypes: objectTypes
         })
       });
       const data = await res.json();
@@ -283,7 +284,11 @@ export default function BackupModal({
         const res = await fetch('/api/oracle/objects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connection: selectedConnection, schema: selectedSchema })
+          body: JSON.stringify({ 
+            connection: selectedConnection, 
+            schema: selectedSchema,
+            visibleTypes: objectTypes
+          })
         });
         const data = await res.json();
         if (!res.ok || !data.objects) {

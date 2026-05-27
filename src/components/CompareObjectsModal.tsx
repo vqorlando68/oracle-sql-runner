@@ -321,7 +321,8 @@ export default function CompareObjectsModal({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             connection: conn,
-            schema: debouncedSchemaA.trim() || undefined
+            schema: debouncedSchemaA.trim() || undefined,
+            skipAuxiliary: true
           })
         });
 
@@ -360,7 +361,8 @@ export default function CompareObjectsModal({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             connection: conn,
-            schema: debouncedSchemaB.trim() || undefined
+            schema: debouncedSchemaB.trim() || undefined,
+            skipAuxiliary: true
           })
         });
 
@@ -475,7 +477,15 @@ export default function CompareObjectsModal({
 
       setCodeA(finalCodeA);
       setCodeB(finalCodeB);
-      showToast('Comparación completada exitosamente', 'success');
+
+      const cleanA = finalCodeA.replace(/\r\n/g, '\n').trim();
+      const cleanB = finalCodeB.replace(/\r\n/g, '\n').trim();
+
+      if (cleanA === cleanB) {
+        showToast('Los objetos son completamente iguales', 'success');
+      } else {
+        showToast('Comparación completada exitosamente', 'success');
+      }
     } catch (err: any) {
       setComparisonError(err.message || 'Error durante la comparación');
       showToast(err.message || 'Error de comparación', 'error');

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { 
   useReactTable, 
   getCoreRowModel, 
@@ -56,8 +56,29 @@ interface Props {
   onLoadMore?: () => void;
 }
 
+const getTableNameFromSql = (sql: string): string | null => {
+  if (!sql) return null;
+  const cleanSql = sql
+    .replace(/--.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .trim();
+  
+  const fromRegex = /\bFROM\s+([a-zA-Z0-9_\.#\$"']+)/i;
+  const match = cleanSql.match(fromRegex);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  return null;
+};
+
+const getRowIdValue = (row: any): string | null => {
+  if (!row) return null;
+  const key = Object.keys(row).find(k => k.toUpperCase() === 'ROWID');
+  return key ? row[key] : null;
+};
+
 export default function ResultsTable({ data, columns, sql, hasMore = false, isLoadingMore = false, onLoadMore }: Props) {
-  const { isDark, exportOptions, gridOptions, showToast } = useAppStore();
+  const { isDark, exportOptions, gridOptions, showToast, activeConnectionId, connections } = useAppStore();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -65,18 +86,141 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [gridModalOpen, setGridModalOpen] = useState(false);
   
-  // Modal state for viewing cell details
-  const [cellModal, setCellModal] = useState<{ isOpen: boolean; content: string; colName: string }>({ isOpen: false, content: '', colName: '' });
+  // Modal state for viewing/editing cell details
+  const [cellModal, setCellModal] = useState<{ 
+    isOpen: boolean; 
+    content: string; 
+    colName: string;
+    rowIndex?: number;
+    isEditable?: boolean;
+  }>({ isOpen: false, content: '', colName: '' });
+
+  const [modalTextValue, setModalTextValue] = useState<string>('');
+
+  useEffect(() => {
+    if (cellModal.isOpen) {
+      setModalTextValue(cellModal.content);
+    } else {
+      setModalTextValue('');
+    }
+  }, [cellModal.isOpen, cellModal.content]);
+
+  // Grid local state to allow updates
+  const [gridData, setGridData] = useState<any[]>(data);
+  useEffect(() => {
+    setGridData(data);
+  }, [data]);
+
+  // Inline editing state
+  const [editingCell, setEditingCell] = useState<{ rowIndex: number; columnId: string; value: string } | null>(null);
+  const [updatingCell, setUpdatingCell] = useState<{ rowIndex: number; columnId: string } | null>(null);
+
+  const handleSave = useCallback(async (rowIndex: number, columnId: string, newValue: string) => {
+    setEditingCell(null);
+    const originalRow = gridData[rowIndex];
+    const rowIdVal = getRowIdValue(originalRow);
+    if (!rowIdVal) {
+      showToast('No se encontró el ROWID para este registro', 'error');
+      return;
+    }
+
+    const currentValue = originalRow[columnId];
+    if (String(currentValue ?? '') === newValue) {
+      return;
+    }
+
+    let tableName = getTableNameFromSql(sql || '');
+    if (!tableName) {
+      const input = window.prompt('No se pudo determinar la tabla automáticamente. Por favor, ingresa el nombre de la tabla a actualizar:');
+      if (!input) return;
+      tableName = input.trim();
+    }
+
+    setUpdatingCell({ rowIndex, columnId });
+    try {
+      const activeConnection = connections.find(c => c.id === activeConnectionId);
+      if (!activeConnection) {
+        throw new Error('No hay una conexión activa seleccionada');
+      }
+
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: `UPDATE ${tableName} SET ${columnId} = :val WHERE ROWID = :rid`,
+          binds: {
+            val: newValue === '' ? null : newValue,
+            rid: rowIdVal
+          },
+          autoCommit: false
+        })
+      });
+
+      const resData = await res.json();
+      if (!res.ok) {
+        throw new Error(resData.error || 'Error al ejecutar UPDATE en la base de datos');
+      }
+
+      const updated = [...gridData];
+      updated[rowIndex] = { ...updated[rowIndex], [columnId]: newValue === '' ? null : newValue };
+      setGridData(updated);
+
+      showToast(`Registro actualizado en la transacción (tabla ${tableName}). Haz clic en COMMIT para guardar permanentemente.`, 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Error al actualizar el registro', 'error');
+    } finally {
+      setUpdatingCell(null);
+    }
+  }, [gridData, sql, connections, activeConnectionId, showToast]);
 
   const tableColumns = useMemo<ColumnDef<any>[]>(() => {
+    const hasRowId = columns.some(c => c.toUpperCase() === 'ROWID');
     return columns.map(col => ({
       accessorKey: col,
       header: col,
       cell: info => {
         const val = info.getValue();
+        const rowIndex = info.row.index;
+        const isEditable = hasRowId && col.toUpperCase() !== 'ROWID';
+        const isEditing = editingCell && editingCell.rowIndex === rowIndex && editingCell.columnId === col;
+        const isUpdating = updatingCell && updatingCell.rowIndex === rowIndex && updatingCell.columnId === col;
+
+        if (isEditing) {
+          return (
+            <input
+              value={editingCell.value}
+              onChange={e => setEditingCell({ ...editingCell, value: e.target.value })}
+              onBlur={() => handleSave(editingCell.rowIndex, editingCell.columnId, editingCell.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  handleSave(editingCell.rowIndex, editingCell.columnId, editingCell.value);
+                } else if (e.key === 'Escape') {
+                  setEditingCell(null);
+                }
+              }}
+              className={`w-full px-2 py-0.5 text-xs rounded border outline-none focus:ring-1 focus:ring-blue-500 ${
+                isDark 
+                  ? 'bg-gray-900 border-gray-700 text-gray-200 focus:ring-blue-500' 
+                  : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500'
+              }`}
+              autoFocus
+            />
+          );
+        }
+
+        if (isUpdating) {
+          return (
+            <div className="flex items-center gap-1.5 text-xs opacity-60">
+              <span className="inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></span>
+              <span className="truncate italic">Actualizando...</span>
+            </div>
+          );
+        }
+
         let displayVal = '';
         if (val === null || val === undefined) {
-          return <span className="text-gray-400 italic">null</span>;
+          displayVal = 'null';
         } else if (typeof val === 'object') {
           displayVal = JSON.stringify(val);
         } else {
@@ -91,7 +235,7 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
             const fmt = gridOptions?.dateFormat || 'YYYY-MM-DD HH24:MI:SS';
             displayVal = formatOracleDate(d, fmt);
           }
-        } else {
+        } else if (val !== null && val !== undefined) {
           // Number formatting
           let isNum = !isNaN(Number(displayVal)) && displayVal.trim() !== '';
           if (isNum && gridOptions?.numberFormat === 'locale') {
@@ -103,14 +247,40 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
         const isLong = displayVal.length > truncateLimit;
         const truncatedVal = isLong ? displayVal.substring(0, truncateLimit) + '...' : displayVal;
 
+        const isNullValue = val === null || val === undefined;
+
         return (
-          <div className="flex justify-between items-center group gap-2">
-            <span className={`truncate inline-block`} style={{ maxWidth: truncateLimit * 8 + 'px' }}>{truncatedVal}</span>
+          <div 
+            onDoubleClick={() => {
+              if (isEditable && !isUpdating) {
+                setEditingCell({
+                  rowIndex,
+                  columnId: col,
+                  value: isNullValue ? '' : String(val)
+                });
+              }
+            }}
+            className={`flex justify-between items-center group gap-2 w-full h-full min-h-[1.5rem] ${
+              isEditable ? 'cursor-pointer hover:bg-blue-500/5' : ''
+            }`}
+            title={isEditable ? "Doble clic para editar" : undefined}
+          >
+            <span 
+              className={`truncate inline-block ${isNullValue ? 'text-gray-400 italic' : ''}`} 
+              style={{ maxWidth: truncateLimit * 8 + 'px' }}
+            >
+              {isNullValue ? 'null' : truncatedVal}
+            </span>
             <div className="flex items-center gap-1 shrink-0">
+              {isEditable && (
+                <span className="opacity-0 group-hover:opacity-40 text-[9px] text-blue-500 font-semibold uppercase shrink-0 select-none">
+                  Editar
+                </span>
+              )}
               <button 
                 onClick={(e) => {
                   e.stopPropagation();
-                  navigator.clipboard.writeText(displayVal);
+                  navigator.clipboard.writeText(isNullValue ? 'null' : displayVal);
                   showToast('Copiado al portapapeles', 'success');
                 }}
                 className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-500/10 rounded transition-all"
@@ -118,11 +288,17 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
               >
                 <Copy className="w-3.5 h-3.5" />
               </button>
-              {isLong && (
+              {(isLong || isEditable) && (
                 <button 
-                  onClick={() => setCellModal({ isOpen: true, content: displayVal, colName: col })}
+                  onClick={() => setCellModal({ 
+                    isOpen: true, 
+                    content: val === null || val === undefined ? '' : String(val), 
+                    colName: col,
+                    rowIndex,
+                    isEditable
+                  })}
                   className="opacity-0 group-hover:opacity-100 p-1 bg-blue-500/10 text-blue-500 rounded hover:bg-blue-500/20 transition-opacity"
-                  title="Ver contenido completo"
+                  title={isEditable ? "Ver y editar contenido" : "Ver contenido completo"}
                 >
                   <Maximize2 className="w-3.5 h-3.5" />
                 </button>
@@ -132,10 +308,10 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
         );
       }
     }));
-  }, [columns, gridOptions]);
+  }, [columns, gridOptions, editingCell, updatingCell, isDark, handleSave, showToast]);
 
   const table = useReactTable({
-    data,
+    data: gridData,
     columns: tableColumns,
     state: { sorting, globalFilter, columnVisibility },
     onSortingChange: setSorting,
@@ -148,7 +324,7 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
   });
 
   const exportExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(data);
+    const ws = XLSX.utils.json_to_sheet(gridData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Results");
     const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -170,7 +346,7 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
 
     if (exportOptions.exportAsInList && exportOptions.inListColumn) {
       // Export just as a single IN list: 'val1', 'val2', 'val3'
-      const vals = data.map(row => {
+      const vals = gridData.map(row => {
         let v = row[exportOptions.inListColumn];
         if (v === null || v === undefined) return '';
         return `'${v}'`;
@@ -190,7 +366,7 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
     }
 
     // Rows Data
-    data.forEach(row => {
+    gridData.forEach(row => {
       const rowLine = validCols.map(col => {
         let val = row[col];
         if (val === null || val === undefined) {
@@ -228,18 +404,18 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
   };
 
   const exportJSON = () => {
-    const json = JSON.stringify(data, null, 2);
+    const json = JSON.stringify(gridData, null, 2);
     saveAs(new Blob([json], { type: "application/json;charset=utf-8" }), 'results.json');
   };
 
   const copyToClipboard = () => {
-    const ws = XLSX.utils.json_to_sheet(data);
+    const ws = XLSX.utils.json_to_sheet(gridData);
     const txt = XLSX.utils.sheet_to_txt(ws);
     navigator.clipboard.writeText(txt);
     showToast('Grid data copied to clipboard!');
   };
 
-  if (!data || data.length === 0) return (
+  if (!gridData || gridData.length === 0) return (
     <div className="flex-1 flex items-center justify-center text-sm opacity-50">
       No data to display
     </div>
@@ -395,11 +571,27 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className={`w-full max-w-4xl max-h-[90vh] flex flex-col rounded-xl shadow-2xl ${isDark ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'} border`}>
             <div className={`p-4 border-b flex justify-between items-center ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
-              <h3 className="font-bold">Column: {cellModal.colName}</h3>
+              <h3 className="font-bold">
+                Column: {cellModal.colName} {cellModal.isEditable && <span className="text-xs text-blue-500 font-normal ml-2">(Modo Edición)</span>}
+              </h3>
               <div className="flex items-center gap-2">
+                {cellModal.isEditable && (
+                  <button
+                    onClick={async () => {
+                      if (cellModal.rowIndex !== undefined) {
+                        await handleSave(cellModal.rowIndex, cellModal.colName, modalTextValue);
+                        setCellModal({ isOpen: false, content: '', colName: '' });
+                      }
+                    }}
+                    className="p-1.5 px-3.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md active:scale-[0.98]"
+                    title="Guardar cambios"
+                  >
+                    Guardar
+                  </button>
+                )}
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(cellModal.content);
+                    navigator.clipboard.writeText(cellModal.isEditable ? modalTextValue : cellModal.content);
                     showToast('Copiado al portapapeles', 'success');
                   }}
                   className={`p-1.5 rounded-md border flex items-center gap-1.5 text-xs font-semibold transition-all ${
@@ -407,19 +599,33 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
                       ? 'border-gray-700 hover:bg-gray-800 text-gray-300 hover:text-white' 
                       : 'border-gray-300 hover:bg-gray-100 text-gray-600 hover:text-gray-900'
                   }`}
-                  title="Copiar contenido completo"
+                  title="Copiar contenido"
                 >
-                  <Copy className="w-4 h-4" /> Copiar contenido
+                  <Copy className="w-4 h-4" /> Copiar
                 </button>
                 <button onClick={() => setCellModal({ isOpen: false, content: '', colName: '' })} className="p-1.5 rounded-md hover:bg-black/10">
                   <X className="w-5 h-5" />
                 </button>
               </div>
             </div>
-            <div className="p-4 flex-1 overflow-auto custom-scrollbar">
-              <pre className="text-sm whitespace-pre-wrap font-mono break-all">
-                {cellModal.content}
-              </pre>
+            <div className="p-4 flex-1 overflow-auto custom-scrollbar flex flex-col">
+              {cellModal.isEditable ? (
+                <textarea
+                  value={modalTextValue}
+                  onChange={(e) => setModalTextValue(e.target.value)}
+                  className={`w-full flex-1 min-h-[400px] p-4 font-mono text-sm border rounded-lg resize-none outline-none focus:ring-1 focus:ring-blue-500 ${
+                    isDark 
+                      ? 'bg-gray-950 border-gray-800 text-gray-200 focus:ring-blue-500' 
+                      : 'bg-gray-55 border-gray-300 text-gray-800 focus:ring-blue-500'
+                  }`}
+                  placeholder="Escribe el contenido aquí..."
+                  autoFocus
+                />
+              ) : (
+                <pre className="text-sm whitespace-pre-wrap font-mono break-all flex-1">
+                  {cellModal.content}
+                </pre>
+              )}
             </div>
           </div>
         </div>

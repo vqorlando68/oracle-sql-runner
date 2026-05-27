@@ -128,7 +128,8 @@ export async function executeOracleQuery(
     }
 
     const isSelect = isSelectQuery(sql);
-    const isPaginated = isSelect && offset !== undefined && limit !== undefined;
+    const hasRowIdInSql = /\browid\b/i.test(sql);
+    const isPaginated = isSelect && offset !== undefined && limit !== undefined && !hasRowIdInSql;
 
     let sqlToExecute = sql;
 
@@ -150,15 +151,9 @@ export async function executeOracleQuery(
 
     if (isPaginated) {
       const cleanedSql = sql.trim().replace(/;+$/, '');
-      sqlToExecute = `
-        SELECT * FROM (
-          SELECT a.*, ROWNUM RNUM_PAG_TEMP FROM (
-            ${cleanedSql}
-          ) a WHERE ROWNUM <= :p_max_row
-        ) WHERE RNUM_PAG_TEMP > :p_min_row
-      `;
-      processedBinds.p_max_row = offset! + limit!;
+      sqlToExecute = `${cleanedSql} OFFSET :p_min_row ROWS FETCH NEXT :p_limit ROWS ONLY`;
       processedBinds.p_min_row = offset!;
+      processedBinds.p_limit = limit!;
     }
 
     const options: oracledb.ExecuteOptions = {};
@@ -167,6 +162,7 @@ export async function executeOracleQuery(
     }
 
     const startTime = Date.now();
+    console.log("SQL to execute in DB:", sqlToExecute);
     const result = await connection.execute(sqlToExecute, processedBinds, options);
     const duration = Date.now() - startTime;
 

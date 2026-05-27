@@ -475,7 +475,10 @@ export default function DiagramEditor({
         const res = await fetch('/api/oracle/objects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connection: selectedConnection })
+          body: JSON.stringify({ 
+            connection: selectedConnection,
+            visibleTypes: ['TABLE']
+          })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error al obtener tablas de la base de datos');
