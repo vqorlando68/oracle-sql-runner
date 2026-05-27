@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { 
   X, Code2, Database, Star, Wand2, AlertTriangle, BookOpen, 
-  Play, Frown, CheckCircle2, ChevronRight, Terminal, HelpCircle,
-  FileCode, Layers, ShieldCheck, RefreshCw, Key
+  Play, ChevronRight, Terminal, FileCode, Layers, ShieldCheck, 
+  RefreshCw, Key, Network, GitCompare, Save
 } from 'lucide-react';
 
 interface HelpModalProps {
@@ -13,7 +13,7 @@ interface HelpModalProps {
   onClose: () => void;
 }
 
-type TabType = 'queries' | 'schema' | 'favorites' | 'tools' | 'oracle';
+type TabType = 'queries' | 'schema' | 'favorites' | 'diagram' | 'compare' | 'backup' | 'tools' | 'oracle';
 
 export default function HelpModal({ isOpen, isDark, onClose }: HelpModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>('queries');
@@ -24,7 +24,10 @@ export default function HelpModal({ isOpen, isDark, onClose }: HelpModalProps) {
     { id: 'queries', name: 'Editor y Consultas', icon: Code2, color: 'text-blue-500' },
     { id: 'schema', name: 'Explorador y Esquema', icon: Database, color: 'text-emerald-500' },
     { id: 'favorites', name: 'Gestión de Favoritos', icon: Star, color: 'text-amber-500' },
-    { id: 'tools', name: 'Herramientas de Valor', icon: Wand2, color: 'text-purple-500' },
+    { id: 'diagram', name: 'Modelo Relación (DER)', icon: Network, color: 'text-indigo-500' },
+    { id: 'compare', name: 'Comparar Objetos', icon: GitCompare, color: 'text-cyan-500' },
+    { id: 'backup', name: 'Copia de Seguridad', icon: Save, color: 'text-teal-500' },
+    { id: 'tools', name: 'DBMS Output', icon: Terminal, color: 'text-purple-500' },
     { id: 'oracle', name: 'Cuidados con Oracle', icon: AlertTriangle, color: 'text-rose-500' },
   ] as const;
 
@@ -48,7 +51,7 @@ export default function HelpModal({ isOpen, isDark, onClose }: HelpModalProps) {
             </div>
           </div>
 
-          <nav className="flex flex-row md:flex-col gap-1 overflow-x-auto md:overflow-x-visible pb-2 md:pb-0 scrollbar-none">
+          <nav className="flex flex-row md:flex-col gap-1 overflow-x-auto md:overflow-y-auto md:overflow-x-visible pb-2 md:pb-0 scrollbar-none custom-scrollbar">
             {tabs.map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -203,7 +206,7 @@ export default function HelpModal({ isOpen, isDark, onClose }: HelpModalProps) {
                 <div className="space-y-4">
                   <h4 className="font-bold text-xs flex items-center gap-2 border-b border-gray-500/10 pb-1.5">
                     <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500/15" />
-                    Organización y Flujos
+                    Organización y Sincronización
                   </h4>
                   <ul className="space-y-3 pl-2">
                     <li className="flex items-start gap-3">
@@ -235,45 +238,156 @@ export default function HelpModal({ isOpen, isDark, onClose }: HelpModalProps) {
               </div>
             )}
 
-            {/* ── TABS 4: TOOLS ── */}
-            {activeTab === 'tools' && (
+            {/* ── TABS 4: DIAGRAM (MODELO RELACION) ── */}
+            {activeTab === 'diagram' && (
               <div className="space-y-5">
                 <p className="opacity-70">
-                  Herramientas avanzadas integradas para enriquecer tus tareas de desarrollo e investigación en esquemas Oracle.
+                  La herramienta de <strong>Modelo de Relación (DER)</strong> te permite diseñar, explorar y documentar de forma visual las entidades del esquema conectado y sus dependencias.
                 </p>
 
                 <div className="space-y-4">
                   <h4 className="font-bold text-xs flex items-center gap-2 border-b border-gray-500/10 pb-1.5">
-                    <FileCode className="w-3.5 h-3.5 text-purple-500" />
-                    Lienzo de Diagramas (DER)
-                  </h4>
-                  <p className="opacity-70 pl-2">
-                    Abre el **Diagrama Relacional** para diseñar diagramas interactivamente. Arrastra las tablas desde el explorador hacia el lienzo, y el sistema graficará las claves foráneas que las unen de manera automática. Puedes guardar los diagramas en la base de datos o exportarlos a imagen PNG.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <h4 className="font-bold text-xs flex items-center gap-2 border-b border-gray-500/10 pb-1.5">
-                    <RefreshCw className="w-3.5 h-3.5 text-purple-500" />
-                    Comparador y Respaldos
+                    <Network className="w-3.5 h-3.5 text-indigo-500" />
+                    Funcionamiento y Uso
                   </h4>
                   <ul className="space-y-3 pl-2">
                     <li className="flex items-start gap-3">
-                      <ChevronRight className="w-3.5 h-3.5 text-purple-500 mt-0.5 flex-shrink-0" />
+                      <ChevronRight className="w-3.5 h-3.5 text-indigo-500 mt-0.5 flex-shrink-0" />
                       <div>
-                        <strong>Comparar Objetos:</strong> Permite contrastar la estructura DDL de tablas o el código fuente de paquetes entre dos esquemas o conexiones diferentes (ej. Desarrollo vs Producción) resaltando las diferencias línea por línea.
+                        <strong>Arrastrar y Soltar:</strong> Abre la herramienta desde la cinta de opciones superior. Agrega tablas al lienzo interactivo arrastrándolas directamente desde el explorador de objetos en el panel izquierdo.
                       </div>
                     </li>
                     <li className="flex items-start gap-3">
-                      <ChevronRight className="w-3.5 h-3.5 text-purple-500 mt-0.5 flex-shrink-0" />
+                      <ChevronRight className="w-3.5 h-3.5 text-indigo-500 mt-0.5 flex-shrink-0" />
                       <div>
-                        <strong>Copia de Seguridad:</strong> Genera y descarga scripts completos del esquema que incluyen la definición DDL y/o sentencias INSERT con los datos de las tablas seleccionadas.
+                        <strong>Detección de Claves Foráneas:</strong> El motor consulta el diccionario de datos de Oracle para graficar las líneas y relaciones correspondientes al instante en que agregas las tablas que las contienen.
+                      </div>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ChevronRight className="w-3.5 h-3.5 text-indigo-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <strong>Guardar y Exportar:</strong> Puedes descargar una copia visual del lienzo en formato de imagen PNG o almacenar la persistencia del lienzo en base de datos para continuar editándolo posteriormente.
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+
+                <div className={`p-4 rounded-xl border flex items-start gap-3 ${
+                  isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800'
+                }`}>
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h5 className="font-bold text-xs">Cuidados y Límites de Rendimiento</h5>
+                    <p className="mt-1 leading-normal">
+                      Arrastrar cientos de tablas simultáneamente con un volumen masivo de dependencias puede ralentizar el renderizado del lienzo en el navegador. Se recomienda modelar diagramas segmentados por módulos de negocio para facilitar la lectura y el rendimiento.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── TABS 5: COMPARE (COMPARAR OBJETOS) ── */}
+            {activeTab === 'compare' && (
+              <div className="space-y-5">
+                <p className="opacity-70">
+                  La herramienta de <strong>Comparación de Objetos</strong> te permite contrastar la estructura y el código de objetos entre diferentes esquemas o bases de datos (por ejemplo, desarrollo vs producción).
+                </p>
+
+                <div className="space-y-4">
+                  <h4 className="font-bold text-xs flex items-center gap-2 border-b border-gray-500/10 pb-1.5">
+                    <GitCompare className="w-3.5 h-3.5 text-cyan-500" />
+                    Funcionamiento y Uso
+                  </h4>
+                  <ul className="space-y-3 pl-2">
+                    <li className="flex items-start gap-3">
+                      <ChevronRight className="w-3.5 h-3.5 text-cyan-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <strong>Comparación Side-by-Side:</strong> Selecciona una conexión origen y una conexión destino, escoge el tipo de objeto y el nombre. El sistema descargará y comparará el DDL o código fuente mostrando las diferencias.
+                      </div>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ChevronRight className="w-3.5 h-3.5 text-cyan-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <strong>Diferencias de Columnas:</strong> Para tablas, se comparan los tipos de datos, longitudes y nulabilidades de cada columna, ayudando a validar la paridad de los esquemas.
                       </div>
                     </li>
                   </ul>
                 </div>
 
                 <div className="space-y-3">
+                  <h4 className="font-bold text-xs flex items-center gap-2 border-b border-gray-500/10 pb-1.5">
+                    <Key className="w-3.5 h-3.5 text-cyan-500" />
+                    Requisitos y Permisos
+                  </h4>
+                  <p className="opacity-70 pl-2">
+                    Para comparar correctamente, el usuario de base de datos de ambas conexiones debe poseer permisos de lectura (<code>SELECT</code>) sobre el diccionario de datos (como <code>ALL_SOURCE</code>, <code>ALL_TAB_COLUMNS</code> y <code>ALL_CONSTRAINTS</code>).
+                  </p>
+                </div>
+
+                <div className={`p-4 rounded-xl border flex items-start gap-3 ${
+                  isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800'
+                }`}>
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h5 className="font-bold text-xs">Cuidados con Conexiones Lentas</h5>
+                    <p className="mt-1 leading-normal">
+                      Si realizas comparaciones a través de VPNs o conexiones de red inestables, la obtención de los DDLs remotos puede tomar unos segundos. Evita recargar la página o realizar múltiples consultas en paralelo durante el análisis de diferencias.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── TABS 6: BACKUP (COPIA DE SEGURIDAD) ── */}
+            {activeTab === 'backup' && (
+              <div className="space-y-5">
+                <p className="opacity-70">
+                  La **Copia de Seguridad** te permite exportar objetos seleccionados del esquema a archivos locales SQL listos para restaurarse en otros entornos.
+                </p>
+
+                <div className="space-y-4">
+                  <h4 className="font-bold text-xs flex items-center gap-2 border-b border-gray-500/10 pb-1.5">
+                    <Save className="w-3.5 h-3.5 text-teal-500" />
+                    Funcionamiento y Respaldos
+                  </h4>
+                  <ul className="space-y-3 pl-2">
+                    <li className="flex items-start gap-3">
+                      <ChevronRight className="w-3.5 h-3.5 text-teal-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <strong>Exportación Estructural (DDL):</strong> Genera las sentencias de creación <code>CREATE TABLE</code>, <code>CREATE VIEW</code>, índices y restricciones en un archivo limpio.
+                      </div>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ChevronRight className="w-3.5 h-3.5 text-teal-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <strong>Exportación de Datos:</strong> Traduce el contenido de las tablas seleccionadas en lotes de sentencias <code>INSERT INTO</code> ejecutables en cualquier otro cliente SQL.
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+
+                <div className={`p-4 rounded-xl border flex items-start gap-3 ${
+                  isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800'
+                }`}>
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h5 className="font-bold text-xs">Cuidados Críticos con Datos Masivos</h5>
+                    <p className="mt-1 leading-normal">
+                      Exportar tablas transaccionales con millones de filas consumirá severamente memoria RAM y tiempo de ejecución, pudiendo saturar tu navegador o impactar negativamente la base de datos Oracle. Para respaldos masivos de producción, es mandatorio utilizar herramientas nativas de base de datos como Oracle Data Pump (<code>expdp</code>) o <code>SQL*Loader</code>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── TABS 7: TOOLS (DBMS OUTPUT) ── */}
+            {activeTab === 'tools' && (
+              <div className="space-y-5">
+                <p className="opacity-70">
+                  Herramientas adicionales de auditoría y desarrollo para leer los logs de salida del servidor.
+                </p>
+
+                <div className="space-y-4">
                   <h4 className="font-bold text-xs flex items-center gap-2 border-b border-gray-500/10 pb-1.5">
                     <Terminal className="w-3.5 h-3.5 text-purple-500" />
                     Salida del Servidor (DBMS_OUTPUT)
@@ -285,7 +399,7 @@ export default function HelpModal({ isOpen, isDark, onClose }: HelpModalProps) {
               </div>
             )}
 
-            {/* ── TABS 5: ORACLE ── */}
+            {/* ── TABS 8: ORACLE ── */}
             {activeTab === 'oracle' && (
               <div className="space-y-5">
                 <div className={`p-4 rounded-xl border flex items-start gap-3 ${

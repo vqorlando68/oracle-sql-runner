@@ -2082,19 +2082,6 @@ export default function Sidebar() {
                   vqorlando@gmail.com
                 </span>
               </div>
-              <div className={`p-3 rounded-2xl border flex items-center justify-between group transition-colors ${isDark ? 'bg-gray-900/40 border-gray-800/80 hover:border-blue-500/20' : 'bg-gray-50 border-gray-100 hover:border-blue-200'}`}>
-                <span className="opacity-40 text-[10px] uppercase">Teléfono</span>
-                <span 
-                  onClick={() => {
-                    navigator.clipboard.writeText('+573168226095');
-                    showToast('Teléfono copiado al portapapeles', 'success');
-                  }}
-                  className="font-bold text-blue-500 hover:text-blue-400 cursor-pointer transition-colors"
-                  title="Haga clic para copiar"
-                >
-                  +57 316 8226095
-                </span>
-              </div>
             </div>
 
             {/* Description */}

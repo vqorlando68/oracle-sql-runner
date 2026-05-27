@@ -923,7 +923,7 @@ export default function Home() {
                   Obtener Clave de Acceso
                 </h3>
                 <p className="text-xs opacity-75 mt-2 leading-relaxed">
-                  Por favor ponte en contacto con el desarrollador del aplicativo utilizando los siguientes medios para recibir tu contraseña:
+                  Por favor ponte en contacto con el desarrollador del aplicativo a través de correo electrónico para recibir tu contraseña:
                 </p>
               </div>
 
@@ -952,36 +952,6 @@ export default function Home() {
                     >
                       <Copy className="w-3.5 h-3.5" />
                     </button>
-                  </div>
-                </div>
-
-                <div className={`p-3 rounded-2xl border flex items-center justify-between group transition-colors ${isDark ? 'bg-gray-900/40 border-gray-800/80 hover:border-blue-500/20' : 'bg-gray-50 border-gray-100 hover:border-blue-200'}`}>
-                  <div className="flex items-center gap-2">
-                    <Phone className="w-3.5 h-3.5 text-blue-500" />
-                    <span className="opacity-40 text-[10px] uppercase font-mono">Teléfono</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-xs select-all">+57 316 8226095</span>
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText('+573168226095');
-                        useAppStore.getState().showToast('Teléfono copiado al portapapeles', 'success');
-                      }}
-                      className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-blue-500 cursor-pointer"
-                      title="Copiar teléfono"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                    </button>
-                    <a 
-                      href="https://wa.me/573168226095" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="p-1 rounded-lg hover:bg-green-500/10 text-green-500 cursor-pointer"
-                      title="Escribir por WhatsApp"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
                   </div>
                 </div>
               </div>
