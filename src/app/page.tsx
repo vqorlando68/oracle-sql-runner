@@ -19,13 +19,14 @@ import {
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
   Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare, Eye, EyeOff,
   ChevronDown, ChevronUp, Maximize2, Minimize2, RefreshCw, Folder, ChevronRight,
-  Package, LogOut, Key, Mail, Phone, ExternalLink, Copy, Sparkles, Code2, Cpu
+  Package, LogOut, Key, Mail, Phone, ExternalLink, Copy, Sparkles, Code2, Cpu, HelpCircle
 } from 'lucide-react';
 import { ExecResult, SqlTab } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
 import CompareObjectsModal from '@/components/CompareObjectsModal';
 import DescribeObjectModal from '@/components/DescribeObjectModal';
 import BackupModal from '@/components/BackupModal';
+import HelpModal from '@/components/HelpModal';
 import { generatePlsqlOutline, OutlineNode } from '@/lib/plsql-parser';
 
 // ── Toolbar Icon Button ──────────────────────────────────────────────────────
@@ -175,6 +176,7 @@ export default function Home() {
   const [isDiagramOpen, setIsDiagramOpen] = useState(false);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [columnsPanelHeight, setColumnsPanelHeight] = useState(250);
   const [showNavigator, setShowNavigator] = useState(true);
   const [expandedNavigatorNodes, setExpandedNavigatorNodes] = useState<Record<string, boolean>>({});
@@ -2105,6 +2107,13 @@ export default function Home() {
             active={showMetadataPanel}
             variant="success"
           />
+          <TbBtn
+            isDark={isDark}
+            icon={<HelpCircle className={iconSize} />}
+            label="Ayuda"
+            onClick={() => setIsHelpOpen(true)}
+            variant="default"
+          />
           
           {/* DBMS Output toggle (compact) & Log Out Button */}
           <div className="ml-auto flex items-center gap-2">
@@ -2880,6 +2889,11 @@ export default function Home() {
         schemas={metadataSchemas}
         isDark={isDark}
         showToast={showToast}
+      />
+      <HelpModal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        isDark={isDark}
       />
 
       {/* Menu contextual para pestañas */}
