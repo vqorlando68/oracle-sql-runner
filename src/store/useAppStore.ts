@@ -52,6 +52,7 @@ interface AppState {
   addFavoriteFromSql: (sql: string, name: string, sectionId: string) => void;
   removeFavorite: (favoriteId: string) => void;
   clearAllFavorites: (deleteSections?: boolean) => void;
+  removeMultipleFavorites: (ids: string[]) => void;
   updateFavoriteSql: (favoriteId: string, sql: string) => void;
   /** Call when user opens/runs a favorite – updates lastRunAt */
   runFavorite: (favoriteId: string) => void;
@@ -261,6 +262,18 @@ export const useAppStore = create<AppState>()(
         const filtered = state.favorites.filter(f => !overwrittenSet.has(f.id));
         return {
           favorites: [...filtered, ...newFavs]
+        };
+      }),
+
+      removeMultipleFavorites: (ids) => set((state) => {
+        const idSet = new Set(ids);
+        return {
+          favorites: state.favorites.filter(f => !idSet.has(f.id)),
+          history: state.history.map(h =>
+            h.linkedFavoriteId && idSet.has(h.linkedFavoriteId)
+              ? { ...h, linkedFavoriteId: undefined }
+              : h
+          ),
         };
       }),
 

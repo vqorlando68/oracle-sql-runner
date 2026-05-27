@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { BookmarkPlus, Plus, XCircle } from 'lucide-react';
+import { BookmarkPlus, Plus, XCircle, Database, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { FavoriteSection } from '@/types';
 import { VARIOS_SECTION_ID } from '@/store/useAppStore';
 
@@ -11,7 +11,9 @@ interface FavoriteNameModalProps {
   sections: FavoriteSection[];
   /** Pre-fill the name field (e.g. from tab title) */
   initialName?: string;
-  onConfirm: (name: string, sectionId: string) => void;
+  /** Whether there is an active DB connection (to enable "save to DB" option) */
+  hasActiveConnection?: boolean;
+  onConfirm: (name: string, sectionId: string, saveToDb: boolean, overwrite: boolean) => void;
   onCancel: () => void;
   onAddSection: (id: string, name: string) => void;
 }
@@ -21,6 +23,7 @@ export default function FavoriteNameModal({
   existingNames,
   sections,
   initialName = '',
+  hasActiveConnection = false,
   onConfirm,
   onCancel,
   onAddSection,
@@ -32,10 +35,11 @@ export default function FavoriteNameModal({
   const [showNewSec, setShowNewSec] = useState(false);
   const [nameError, setNameError] = useState('');
   const [secError, setSecError] = useState('');
+  const [saveToDb, setSaveToDb] = useState(false);
 
   const trimmedName = name.trim();
   const trimmedSecName = newSecName.trim();
-  const isDuplicate = existingNames.some(n => n.toLowerCase() === trimmedName.toLowerCase());
+  const isDuplicate = trimmedName.length > 0 && existingNames.some(n => n.toLowerCase() === trimmedName.toLowerCase());
 
   const inputCls = (err: boolean) =>
     `w-full px-3 py-2 rounded-lg border text-sm outline-none transition-colors ${
@@ -60,9 +64,9 @@ export default function FavoriteNameModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!trimmedName) { setNameError('El nombre no puede estar vacío.'); return; }
-    if (isDuplicate) { setNameError('Ya existe un favorito con ese nombre.'); return; }
     if (!sectionId) { setNameError('Debes seleccionar una sección.'); return; }
-    onConfirm(trimmedName, sectionId);
+    // isDuplicate: ask for overwrite → still call onConfirm with overwrite=true
+    onConfirm(trimmedName, sectionId, saveToDb, isDuplicate);
   };
 
   return (
@@ -93,11 +97,24 @@ export default function FavoriteNameModal({
               placeholder="ej. Reporte ventas mensual"
               className={inputCls(!!nameError || isDuplicate)}
             />
-            {(nameError || isDuplicate) && (
+            {nameError && (
               <span className="text-xs text-red-400 flex items-center gap-1">
                 <XCircle className="w-3 h-3" />
-                {nameError || 'Ya existe un favorito con ese nombre.'}
+                {nameError}
               </span>
+            )}
+            {/* Duplicate warning — non-blocking */}
+            {isDuplicate && !nameError && (
+              <div className={`flex items-start gap-1.5 px-2.5 py-2 rounded-lg text-xs ${
+                isDark ? 'bg-amber-500/10 text-amber-300 border border-amber-500/25' : 'bg-amber-50 text-amber-700 border border-amber-200'
+              }`}>
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <span>
+                  Ya existe un favorito con ese nombre.{' '}
+                  <strong>Al guardar se sobrescribirá</strong> el existente
+                  {saveToDb ? ' (local y en la BD)' : ' localmente'}.
+                </span>
+              </div>
             )}
           </div>
 
@@ -159,6 +176,48 @@ export default function FavoriteNameModal({
             )}
           </div>
 
+          {/* Save to DB checkbox */}
+          <div
+            className={`flex items-center gap-2.5 cursor-pointer select-none px-3 py-2.5 rounded-xl border transition-all ${
+              !hasActiveConnection
+                ? (isDark ? 'opacity-40 border-gray-800 bg-gray-900/30' : 'opacity-40 border-gray-200 bg-gray-50')
+                : saveToDb
+                ? (isDark ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-emerald-400 bg-emerald-50')
+                : (isDark ? 'border-gray-700 hover:border-gray-600 bg-gray-800/30' : 'border-gray-200 hover:border-gray-300 bg-gray-50')
+            }`}
+            onClick={() => hasActiveConnection && setSaveToDb(v => !v)}
+            title={!hasActiveConnection ? 'Necesitas una conexión activa para guardar en la BD' : 'Guardar también en la base de datos conectada'}
+          >
+            {/* Checkbox visual */}
+            <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-all ${
+              saveToDb && hasActiveConnection
+                ? 'bg-emerald-500 border-emerald-500'
+                : isDark ? 'border-gray-600 bg-gray-800/50' : 'border-gray-300 bg-white'
+            }`}>
+              {saveToDb && hasActiveConnection && (
+                <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 10">
+                  <path d="M1.5 5l2.5 2.5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </div>
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <span className="text-xs font-medium flex items-center gap-1.5">
+                <Database className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                Guardar también en la base de datos
+              </span>
+              {!hasActiveConnection && (
+                <span className="text-[10px] opacity-60">Sin conexión activa</span>
+              )}
+              {saveToDb && hasActiveConnection && (
+                <span className="text-[10px] text-emerald-400/80 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  Se guardará en la BD de la conexión activa
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Buttons */}
           <div className="flex gap-2 pt-1">
             <button
               type="button"
@@ -171,10 +230,14 @@ export default function FavoriteNameModal({
             </button>
             <button
               type="submit"
-              disabled={!trimmedName || isDuplicate || !sectionId}
-              className="flex-1 py-2 rounded-lg text-sm bg-yellow-500 hover:bg-yellow-400 text-black font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!trimmedName || !sectionId}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                isDuplicate
+                  ? 'bg-amber-500 hover:bg-amber-400 text-black'
+                  : 'bg-yellow-500 hover:bg-yellow-400 text-black'
+              }`}
             >
-              Guardar
+              {isDuplicate ? 'Sobrescribir' : 'Guardar'}
             </button>
           </div>
         </form>

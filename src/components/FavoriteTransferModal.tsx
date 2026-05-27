@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { X, ArrowRightLeft, CheckSquare, Square, Folder, Database, AlertCircle } from 'lucide-react';
+import { X, ArrowRightLeft, CheckSquare, Square, Folder, FolderOpen, ChevronDown, ChevronRight, Database, AlertCircle } from 'lucide-react';
 import { Connection, Favorite, FavoriteSection } from '@/types';
 
 interface FavoriteTransferModalProps {
@@ -12,6 +12,15 @@ interface FavoriteTransferModalProps {
   favoriteSections: FavoriteSection[];
   onTransfer: (newFavs: Favorite[], overwrittenFavIds: string[]) => void;
   onCancel: () => void;
+}
+
+interface GroupedItems {
+  sectionName: string;
+  items: Array<{
+    id: string;
+    name: string;
+    sql: string;
+  }>;
 }
 
 export default function FavoriteTransferModal({
@@ -60,7 +69,7 @@ export default function FavoriteTransferModal({
   }, [sourceId, destId, pseudoConnections]);
 
   // Checklist utilities
-  const handleToggleFav = (id: string) => {
+  const handleToggleItem = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -72,12 +81,151 @@ export default function FavoriteTransferModal({
     });
   };
 
+  const handleToggleSection = (group: GroupedItems) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const groupIds = group.items.map(item => item.id);
+      const allSelected = groupIds.every(id => next.has(id));
+
+      if (allSelected) {
+        groupIds.forEach(id => next.delete(id));
+      } else {
+        groupIds.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  };
+
   const handleToggleSelectAll = () => {
-    if (selectedIds.size === sourceFavorites.length) {
+    const allIds = sourceFavorites.map(f => f.id);
+    const isAllSelected = allIds.every(id => selectedIds.has(id));
+
+    if (isAllSelected) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(sourceFavorites.map(f => f.id)));
+      setSelectedIds(new Set(allIds));
     }
+  };
+
+  // Group items by section
+  const groupedData = useMemo<GroupedItems[]>(() => {
+    const groups: Record<string, GroupedItems> = {};
+    sourceFavorites.forEach(fav => {
+      const section = favoriteSections.find(s => s.id === fav.sectionId);
+      const sectionName = section ? section.name : 'Varios';
+      if (!groups[sectionName]) {
+        groups[sectionName] = { sectionName, items: [] };
+      }
+      groups[sectionName].items.push({
+        id: fav.id,
+        name: fav.name,
+        sql: fav.sql,
+      });
+    });
+    return Object.values(groups);
+  }, [sourceFavorites, favoriteSections]);
+
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+
+  // Auto-expand all sections when groupedData changes
+  useEffect(() => {
+    if (groupedData.length > 0) {
+      const initial: Record<string, boolean> = {};
+      groupedData.forEach(g => {
+        initial[g.sectionName] = true;
+      });
+      setExpandedSections(initial);
+    }
+  }, [groupedData]);
+
+  // Search state variables
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeMatchIndex, setActiveMatchIndex] = useState(-1);
+
+  // Compute search matches
+  const matches = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const query = searchQuery.toLowerCase();
+    const list: Array<{
+      type: 'section' | 'favorite';
+      id: string;
+      sectionName: string;
+      favoriteId?: string;
+      name: string;
+    }> = [];
+
+    groupedData.forEach(group => {
+      const isSecMatch = group.sectionName.toLowerCase().includes(query);
+      if (isSecMatch) {
+        list.push({
+          type: 'section',
+          id: `section:${group.sectionName}`,
+          sectionName: group.sectionName,
+          name: group.sectionName,
+        });
+      }
+      group.items.forEach(item => {
+        const isItemMatch = item.name.toLowerCase().includes(query);
+        if (isItemMatch) {
+          list.push({
+            type: 'favorite',
+            id: `favorite:${item.id}`,
+            sectionName: group.sectionName,
+            favoriteId: item.id,
+            name: item.name,
+          });
+        }
+      });
+    });
+    return list;
+  }, [searchQuery, groupedData]);
+
+  // Function to scroll and auto-expand match
+  const scrollToMatch = (index: number) => {
+    if (index < 0 || index >= matches.length) return;
+    const match = matches[index];
+
+    if (match.type === 'favorite') {
+      setExpandedSections(prev => {
+        if (!prev[match.sectionName]) {
+          return { ...prev, [match.sectionName]: true };
+        }
+        return prev;
+      });
+    }
+
+    setTimeout(() => {
+      const elementId = match.type === 'section'
+        ? `transfer-node-section-${match.sectionName}`
+        : `transfer-node-favorite-${match.favoriteId}`;
+      const el = document.getElementById(elementId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }, 60);
+  };
+
+  useEffect(() => {
+    if (matches.length > 0) {
+      setActiveMatchIndex(0);
+      scrollToMatch(0);
+    } else {
+      setActiveMatchIndex(-1);
+    }
+  }, [matches]);
+
+  const handleNextMatch = () => {
+    if (matches.length === 0) return;
+    const next = (activeMatchIndex + 1) % matches.length;
+    setActiveMatchIndex(next);
+    scrollToMatch(next);
+  };
+
+  const handlePrevMatch = () => {
+    if (matches.length === 0) return;
+    const prev = (activeMatchIndex - 1 + matches.length) % matches.length;
+    setActiveMatchIndex(prev);
+    scrollToMatch(prev);
   };
 
   // State machine for duplicate resolution wizard
@@ -207,7 +355,7 @@ export default function FavoriteTransferModal({
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className={`w-full max-w-2xl rounded-2xl shadow-2xl border flex flex-col max-h-[80vh] overflow-hidden ${
+      <div className={`w-full max-w-3xl rounded-2xl shadow-2xl border flex flex-col max-h-[85vh] overflow-hidden ${
         isDark ? 'bg-gray-900 border-gray-700 text-gray-100' : 'bg-white border-gray-200 text-gray-800'
       }`}>
         
@@ -229,7 +377,7 @@ export default function FavoriteTransferModal({
 
         {/* Dynamic Resolution UI when there is a conflict */}
         {isProcessing && conflictState ? (
-          <div className="flex-1 p-6 flex flex-col justify-center items-center gap-4 text-center">
+          <div className="flex-1 p-6 flex flex-col justify-center items-center gap-4 text-center overflow-y-auto">
             <div className="p-3 bg-amber-500/10 text-amber-500 rounded-full animate-bounce">
               <AlertCircle className="w-8 h-8" />
             </div>
@@ -245,7 +393,7 @@ export default function FavoriteTransferModal({
 
             {/* Conflict details visual check */}
             <div className={`w-full max-w-md p-3.5 rounded-xl border text-left font-mono text-[10px] space-y-2 ${
-              isDark ? 'bg-gray-950/60 border-gray-800' : 'bg-gray-50 border-gray-100'
+              isDark ? 'bg-gray-950/60 border-gray-800' : 'bg-gray-50 border-gray-150'
             }`}>
               <div>
                 <span className="text-purple-400 block font-bold">SQL ORIGEN:</span>
@@ -262,19 +410,19 @@ export default function FavoriteTransferModal({
             <div className="grid grid-cols-2 gap-2 w-full max-w-md mt-2">
               <button
                 onClick={() => resolveConflict('overwrite')}
-                className="py-2 px-4 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-md"
+                className="py-2 px-4 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-md cursor-pointer"
               >
                 Sí (Sobrescribir)
               </button>
               <button
                 onClick={() => resolveConflict('overwrite-all')}
-                className="py-2 px-4 rounded-xl text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white transition-all shadow-md"
+                className="py-2 px-4 rounded-xl text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white transition-all shadow-md cursor-pointer"
               >
                 Sí a Todos
               </button>
               <button
                 onClick={() => resolveConflict('skip')}
-                className={`py-2 px-4 rounded-xl text-xs font-semibold border transition-all ${
+                className={`py-2 px-4 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                   isDark ? 'border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-750' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                 }`}
               >
@@ -282,7 +430,7 @@ export default function FavoriteTransferModal({
               </button>
               <button
                 onClick={() => resolveConflict('skip-all')}
-                className={`py-2 px-4 rounded-xl text-xs font-semibold border transition-all ${
+                className={`py-2 px-4 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                   isDark ? 'border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-750' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                 }`}
               >
@@ -290,7 +438,7 @@ export default function FavoriteTransferModal({
               </button>
               <button
                 onClick={() => resolveConflict('cancel')}
-                className="col-span-2 py-1.5 text-xs font-medium text-red-500 hover:text-red-400 mt-2 hover:underline"
+                className="col-span-2 py-1.5 text-xs font-medium text-red-500 hover:text-red-400 mt-2 hover:underline cursor-pointer"
               >
                 Cancelar Operación
               </button>
@@ -314,7 +462,7 @@ export default function FavoriteTransferModal({
                   <select
                     value={sourceId}
                     onChange={(e) => setSourceId(e.target.value)}
-                    className={`py-2 px-3 rounded-lg text-xs outline-none border ${
+                    className={`py-2 px-3 rounded-lg text-xs outline-none border cursor-pointer ${
                       isDark 
                         ? 'bg-gray-800 border-gray-700 text-gray-150 focus:border-purple-500' 
                         : 'bg-white border-gray-300 text-gray-800 focus:border-purple-500'
@@ -332,7 +480,7 @@ export default function FavoriteTransferModal({
                   <select
                     value={destId}
                     onChange={(e) => setDestId(e.target.value)}
-                    className={`py-2 px-3 rounded-lg text-xs outline-none border ${
+                    className={`py-2 px-3 rounded-lg text-xs outline-none border cursor-pointer ${
                       isDark 
                         ? 'bg-gray-800 border-gray-700 text-gray-150 focus:border-purple-500' 
                         : 'bg-white border-gray-300 text-gray-800 focus:border-purple-500'
@@ -347,54 +495,234 @@ export default function FavoriteTransferModal({
                 </div>
               </div>
 
-              {/* Favorites checklist */}
-              <div className="flex flex-col flex-1 min-h-[220px]">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-bold opacity-75">
-                    Favoritos de origen ({sourceFavorites.length})
+              {/* Search bar and selection controllers */}
+              <div className="flex flex-col gap-2.5">
+                {/* Search Input Bar */}
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+                    <svg className={`h-4 w-4 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
                   </span>
-                  {sourceFavorites.length > 0 && (
-                    <button
+                  <input
+                    type="text"
+                    placeholder="Buscar sección o favorito..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (e.shiftKey) {
+                          handlePrevMatch();
+                        } else {
+                          handleNextMatch();
+                        }
+                      } else if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        handleNextMatch();
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        handlePrevMatch();
+                      }
+                    }}
+                    className={`w-full pl-9 pr-8 py-1.5 rounded-lg text-xs border outline-none transition-all ${
+                      isDark 
+                        ? 'bg-gray-800/80 border-gray-700 text-gray-100 placeholder-gray-500 focus:border-purple-500/50' 
+                        : 'bg-white border-gray-200 text-gray-800 placeholder-gray-400 focus:border-purple-500/50'
+                    }`}
+                  />
+                  {searchQuery && (
+                    <button 
                       type="button"
-                      onClick={handleToggleSelectAll}
-                      className="text-[11px] font-semibold text-purple-400 hover:text-purple-300 transition-colors cursor-pointer"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
                     >
-                      {selectedIds.size === sourceFavorites.length ? 'Desmarcar todos' : 'Marcar todos'}
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
 
-                <div className={`flex-1 rounded-xl border p-3.5 space-y-1.5 overflow-y-auto max-h-[300px] custom-scrollbar ${
+                {/* Master Control Bar */}
+                {sourceFavorites.length > 0 && (
+                  <div className={`px-3 py-2 rounded-lg border flex items-center justify-between text-[11px] font-semibold ${
+                    isDark ? 'bg-gray-850/40 border-gray-800' : 'bg-gray-50 border-gray-150'
+                  }`}>
+                    <div className="flex items-center gap-4">
+                      <button
+                        type="button"
+                        onClick={handleToggleSelectAll}
+                        className="flex items-center gap-1.5 hover:opacity-80 transition-opacity cursor-pointer text-left"
+                      >
+                        {selectedIds.size === sourceFavorites.length ? (
+                          <CheckSquare className="w-3.5 h-3.5 text-purple-500" />
+                        ) : (
+                          <Square className="w-3.5 h-3.5 opacity-60" />
+                        )}
+                        {selectedIds.size === sourceFavorites.length ? 'Desmarcar todos' : 'Marcar todos'}
+                      </button>
+
+                      <div className="w-px h-3 bg-gray-500/20" />
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const all: Record<string, boolean> = {};
+                            groupedData.forEach(g => {
+                              all[g.sectionName] = true;
+                            });
+                            setExpandedSections(all);
+                          }}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-semibold border transition-colors cursor-pointer ${
+                            isDark 
+                              ? 'border-gray-700 bg-gray-800/40 hover:bg-gray-800 text-purple-400' 
+                              : 'border-gray-200 bg-white hover:bg-gray-50 text-purple-600'
+                          }`}
+                        >
+                          Expandir todo
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedSections({})}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-semibold border transition-colors cursor-pointer ${
+                            isDark 
+                              ? 'border-gray-700 bg-gray-800/40 hover:bg-gray-800 text-gray-400 hover:text-gray-200' 
+                              : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-600'
+                          }`}
+                        >
+                          Colapsar todo
+                        </button>
+                      </div>
+                    </div>
+
+                    <span className="opacity-60">
+                      {selectedIds.size} de {sourceFavorites.length} seleccionados
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Favorites checklist (Hierarchical) */}
+              <div className="flex flex-col flex-1 min-h-[300px]">
+                <div className={`flex-1 rounded-xl border p-3.5 space-y-2 overflow-y-auto max-h-[350px] custom-scrollbar ${
                   isDark ? 'bg-gray-950/30 border-gray-800' : 'bg-gray-50 border-gray-150'
                 }`}>
-                  {sourceFavorites.map(fav => {
-                    const isSelected = selectedIds.has(fav.id);
-                    const sectionName = favoriteSections.find(s => s.id === fav.sectionId)?.name || 'Varios';
-                    
+                  {groupedData.map(group => {
+                    const groupIds = group.items.map(item => item.id);
+                    const groupSelectedCount = groupIds.filter(id => selectedIds.has(id)).length;
+                    const isGroupAllSelected = groupSelectedCount === groupIds.length;
+                    const isExpanded = !!expandedSections[group.sectionName];
+
+                    const isSectionActive = activeMatchIndex !== -1 && matches[activeMatchIndex]?.type === 'section' && matches[activeMatchIndex]?.sectionName === group.sectionName;
+                    const isSectionSecondary = searchQuery.trim() !== '' && !isSectionActive && matches.some(m => m.type === 'section' && m.sectionName === group.sectionName);
+
+                    let sectionBorderClass = '';
+                    if (isSectionActive) {
+                      sectionBorderClass = isDark 
+                        ? 'ring-2 ring-purple-500/60 bg-purple-500/10 border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.1)]' 
+                        : 'ring-2 ring-purple-500/60 bg-purple-50 border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.1)]';
+                    } else if (isSectionSecondary) {
+                      sectionBorderClass = isDark 
+                        ? 'border-dashed border-purple-500/30 bg-purple-500/5' 
+                        : 'border-dashed border-purple-300 bg-purple-50/20';
+                    } else {
+                      sectionBorderClass = isDark ? 'border-gray-800 bg-gray-850/20' : 'border-gray-150 bg-gray-55/30';
+                    }
+
                     return (
-                      <div
-                        key={fav.id}
-                        onClick={() => handleToggleFav(fav.id)}
-                        className={`flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-all text-xs ${
-                          isSelected
-                            ? isDark ? 'bg-purple-500/10 text-purple-300 border border-purple-500/20' : 'bg-purple-50 text-purple-800 border border-purple-200'
-                            : 'hover:bg-black/5 dark:hover:bg-white/5 border border-transparent'
-                        }`}
+                      <div 
+                        key={group.sectionName} 
+                        id={`transfer-node-section-${group.sectionName}`}
+                        className={`rounded-xl border transition-all duration-200 p-3 space-y-2 ${sectionBorderClass}`}
                       >
-                        <div className="mt-0.5 flex-shrink-0">
-                          {isSelected ? (
-                            <CheckSquare className="w-3.5 h-3.5 text-purple-400" />
-                          ) : (
-                            <Square className="w-3.5 h-3.5 opacity-40" />
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="font-semibold truncate">{fav.name}</div>
-                          <div className="flex items-center gap-1.5 text-[9px] opacity-50 mt-0.5">
-                            <Folder className="w-3 h-3 text-yellow-500" />
-                            <span>{sectionName}</span>
+                        
+                        {/* Group header */}
+                        <div 
+                          className="flex items-center justify-between pb-1 select-none cursor-pointer"
+                          onClick={() => setExpandedSections(prev => ({ ...prev, [group.sectionName]: !prev[group.sectionName] }))}
+                        >
+                          <div className="flex items-center gap-2 font-semibold text-xs text-left">
+                            {/* Chevron expand/collapse */}
+                            <div className="text-gray-400 p-0.5 rounded transition-colors hover:bg-black/5 dark:hover:bg-white/5">
+                              {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleSection(group);
+                              }}
+                              className="p-0.5 hover:bg-black/10 dark:hover:bg-white/10 rounded transition-colors"
+                            >
+                              {isGroupAllSelected ? (
+                                <CheckSquare className="w-3.5 h-3.5 text-purple-500" />
+                              ) : groupSelectedCount > 0 ? (
+                                <CheckSquare className="w-3.5 h-3.5 opacity-80 text-purple-500/80" />
+                              ) : (
+                                <Square className="w-3.5 h-3.5 opacity-55" />
+                              )}
+                            </button>
+
+                            {isExpanded ? (
+                              <FolderOpen className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500/10 flex-shrink-0" />
+                            ) : (
+                              <Folder className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500/10 flex-shrink-0" />
+                            )}
+
+                            <span>{group.sectionName}</span>
                           </div>
+                          <span className="text-[10px] opacity-40">
+                            ({groupSelectedCount} / {groupIds.length})
+                          </span>
                         </div>
+
+                        {/* Group items */}
+                        {isExpanded && (
+                          <div className="space-y-1.5 pl-6 border-l border-gray-500/10 ml-2.5">
+                            {group.items.map(item => {
+                              const isSelected = selectedIds.has(item.id);
+                              
+                              const isItemActive = activeMatchIndex !== -1 && matches[activeMatchIndex]?.type === 'favorite' && matches[activeMatchIndex]?.favoriteId === item.id;
+                              const isItemSecondary = searchQuery.trim() !== '' && !isItemActive && matches.some(m => m.type === 'favorite' && m.favoriteId === item.id);
+
+                              let itemBgClass = '';
+                              if (isItemActive) {
+                                itemBgClass = isDark 
+                                  ? 'bg-purple-500/20 text-purple-300 ring-2 ring-purple-500/55 shadow-[0_0_8px_rgba(168,85,247,0.15)]' 
+                                  : 'bg-purple-100 text-purple-900 ring-2 ring-purple-400';
+                              } else if (isItemSecondary) {
+                                itemBgClass = isDark 
+                                  ? 'bg-purple-500/10 text-purple-400 border border-dashed border-purple-500/30' 
+                                  : 'bg-purple-50/70 text-purple-800 border border-dashed border-purple-300';
+                              } else if (isSelected) {
+                                itemBgClass = isDark ? 'bg-gray-800/60 text-gray-100' : 'bg-gray-100/70 text-gray-850';
+                              } else {
+                                itemBgClass = 'hover:bg-black/5 dark:hover:bg-white/5 text-gray-700 dark:text-gray-300';
+                              }
+
+                              return (
+                                <div
+                                  key={item.id}
+                                  id={`transfer-node-favorite-${item.id}`}
+                                  onClick={() => handleToggleItem(item.id)}
+                                  className={`flex items-start gap-3 p-2 rounded-lg cursor-pointer transition-all duration-150 text-xs ${itemBgClass}`}
+                                >
+                                  <div className="mt-0.5 flex-shrink-0">
+                                    {isSelected ? (
+                                      <CheckSquare className="w-3.5 h-3.5 text-purple-500" />
+                                    ) : (
+                                      <Square className="w-3.5 h-3.5 opacity-40" />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <span className="font-semibold truncate block">{item.name}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

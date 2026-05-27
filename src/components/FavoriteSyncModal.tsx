@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { CloudDownload, CloudUpload, X, CheckSquare, Square, Folder, FolderOpen, ChevronDown, ChevronRight, HelpCircle } from 'lucide-react';
 import SqlInstructionsModal from './SqlInstructionsModal';
-import { Favorite, FavoriteSection } from '@/types';
+import { Favorite, FavoriteSection, Connection } from '@/types';
 
 interface FavoriteSyncModalProps {
   isOpen: boolean;
@@ -14,8 +14,10 @@ interface FavoriteSyncModalProps {
   dbFavorites?: any[];
   dbSections?: any[];
   initialErrorMsg?: string;
-  onConfirm: (selectedIds: any[]) => Promise<void>;
+  onConfirm: (selectedIds: any[], selectedConnection?: Connection) => Promise<void>;
   onCancel: () => void;
+  connections?: Connection[];
+  activeConnectionId?: string | null;
 }
 
 interface GroupedItems {
@@ -39,22 +41,40 @@ export default function FavoriteSyncModal({
   initialErrorMsg = '',
   onConfirm,
   onCancel,
+  connections = [],
+  activeConnectionId = null,
 }: FavoriteSyncModalProps) {
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string>(() => {
+    return activeConnectionId || (connections.length > 0 ? connections[0].id : '');
+  });
+  const [currentDbFavorites, setCurrentDbFavorites] = useState<any[]>(dbFavorites);
+  const [currentDbSections, setCurrentDbSections] = useState<any[]>(dbSections);
+  const [isLoadingDbData, setIsLoadingDbData] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(initialErrorMsg);
+  const [showSqlModal, setShowSqlModal] = useState(false);
+
   const [selectedIds, setSelectedIds] = useState<Set<any>>(() => {
     if (mode === 'save') {
-      return new Set(localFavorites.map(f => f.id));
+      const activeLocal = localFavorites.filter(
+        fav => !fav.connectionId || fav.connectionId === (activeConnectionId || (connections.length > 0 ? connections[0].id : ''))
+      );
+      return new Set(activeLocal.map(f => f.id));
     } else {
       return new Set(dbFavorites.map(f => f.ID));
     }
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState(initialErrorMsg);
-  const [showSqlModal, setShowSqlModal] = useState(false);
-  // Group items by section
-  const [groupedData, setGroupedData] = useState<GroupedItems[]>(() => {
+  const [groupedData, setGroupedData] = useState<GroupedItems[]>([]);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+
+  // Sync groupedData and selectedIds on state or prop changes
+  useEffect(() => {
     if (mode === 'save') {
       const groups: Record<string, GroupedItems> = {};
-      localFavorites.forEach(fav => {
+      const activeLocalFavorites = localFavorites.filter(
+        fav => !fav.connectionId || fav.connectionId === selectedConnectionId
+      );
+      activeLocalFavorites.forEach(fav => {
         const section = localSections.find(s => s.id === fav.sectionId);
         const sectionName = section ? section.name : 'Varios';
         if (!groups[sectionName]) {
@@ -67,11 +87,13 @@ export default function FavoriteSyncModal({
           dbId: fav.dbId,
         });
       });
-      return Object.values(groups);
+      setGroupedData(Object.values(groups));
+      // Reset selectedIds when loaded favorites change (connection switch)
+      setSelectedIds(new Set(activeLocalFavorites.map(f => f.id)));
     } else {
       const groups: Record<string, GroupedItems> = {};
-      dbFavorites.forEach(fav => {
-        const dbSec = dbSections.find(s => s.ID === fav.SECCION_ID);
+      currentDbFavorites.forEach(fav => {
+        const dbSec = currentDbSections.find(s => s.ID === fav.SECCION_ID);
         const sectionName = dbSec ? dbSec.NAME : 'Varios';
         if (!groups[sectionName]) {
           groups[sectionName] = { sectionName, items: [] };
@@ -83,11 +105,11 @@ export default function FavoriteSyncModal({
           dbId: fav.ID,
         });
       });
-      return Object.values(groups);
+      setGroupedData(Object.values(groups));
+      // Reset selectedIds when loaded db favorites change (connection switch)
+      setSelectedIds(new Set(currentDbFavorites.map(f => f.ID)));
     }
-  });
-
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  }, [currentDbFavorites, currentDbSections, localFavorites, localSections, mode, selectedConnectionId]);
 
   // Auto-expand all sections on load
   useEffect(() => {
@@ -234,6 +256,64 @@ export default function FavoriteSyncModal({
     setSelectedIds(next);
   };
 
+  const handleConnectionChange = async (connId: string) => {
+    setSelectedConnectionId(connId);
+    if (mode === 'save') {
+      return;
+    }
+    const conn = connections.find(c => c.id === connId);
+    if (!conn) return;
+
+    setIsLoadingDbData(true);
+    setErrorMsg('');
+    try {
+      // 1. Fetch DB sections
+      const secRes = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: conn,
+          sql: 'SELECT id, name FROM TKR_FAVORITOS_SECCIONES ORDER BY id'
+        })
+      });
+
+      if (!secRes.ok) {
+        const errData = await secRes.json();
+        if (errData.error?.includes('ORA-00942')) {
+          throw new Error('Las tablas de favoritos (TKR_FAVORITOS) no existen en la base de datos. Ejecuta el script "tablas.sql" para crearlas.');
+        }
+        throw new Error(errData.error || 'Error al cargar secciones de favoritos de la base de datos.');
+      }
+      const secData = await secRes.json();
+
+      // 2. Fetch DB favorites
+      const favRes = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: conn,
+          sql: 'SELECT id, name, sql_query, seccion_id, created_at, last_run_at FROM TKR_FAVORITOS ORDER BY id'
+        })
+      });
+
+      if (!favRes.ok) {
+        const errData = await favRes.json();
+        throw new Error(errData.error || 'Error al cargar favoritos de la base de datos.');
+      }
+      const favData = await favRes.json();
+
+      setCurrentDbSections(secData.rows || []);
+      setCurrentDbFavorites(favData.rows || []);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || 'Error al cargar favoritos de la BD');
+      setCurrentDbSections([]);
+      setCurrentDbFavorites([]);
+    } finally {
+      setIsLoadingDbData(false);
+    }
+  };
+
   const handleConfirm = async () => {
     if (selectedIds.size === 0) {
       setErrorMsg('Debes seleccionar al menos un favorito.');
@@ -242,7 +322,8 @@ export default function FavoriteSyncModal({
     setIsSubmitting(true);
     setErrorMsg('');
     try {
-      await onConfirm(Array.from(selectedIds));
+      const conn = connections.find(c => c.id === selectedConnectionId);
+      await onConfirm(Array.from(selectedIds), conn);
     } catch (err: any) {
       setErrorMsg(err.message || 'Ocurrió un error al sincronizar.');
     } finally {
@@ -319,7 +400,7 @@ export default function FavoriteSyncModal({
               }}
               className={`w-full pl-9 pr-8 py-1.5 rounded-lg text-xs border outline-none transition-all ${
                 isDark 
-                  ? 'bg-gray-800/80 border-gray-700 text-gray-100 placeholder-gray-500 focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/30' 
+                  ? 'bg-gray-800/80 border-gray-700 text-gray-105 placeholder-gray-500 focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/30' 
                   : 'bg-white border-gray-200 text-gray-800 placeholder-gray-400 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30'
               }`}
             />
@@ -373,8 +454,35 @@ export default function FavoriteSyncModal({
           )}
         </div>
 
+        {/* Connection Selector */}
+        {connections.length > 0 && (
+          <div className={`px-5 py-3 border-b flex flex-col gap-2 ${
+            isDark ? 'bg-gray-900/30 border-gray-800' : 'bg-gray-50/30 border-gray-100'
+          }`}>
+            <label className="text-[10px] uppercase font-bold tracking-wider opacity-60">
+              {mode === 'save' ? 'Conexión de destino' : 'Conexión de origen'}
+            </label>
+            <select
+              value={selectedConnectionId}
+              onChange={(e) => handleConnectionChange(e.target.value)}
+              disabled={isLoadingDbData || isSubmitting}
+              className={`w-full px-3 py-2 rounded-lg text-xs border outline-none transition-all cursor-pointer ${
+                isDark 
+                  ? 'bg-gray-800 border-gray-700 text-gray-100 focus:border-blue-500/50' 
+                  : 'bg-white border-gray-200 text-gray-800 focus:border-blue-500/50'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {connections.map((conn) => (
+                <option key={conn.id} value={conn.id}>
+                  {conn.name} ({conn.user}@{conn.host})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Master Control */}
-        {totalCount > 0 && (
+        {totalCount > 0 && !isLoadingDbData && (
           <div className={`px-5 py-3 border-b flex items-center justify-between text-xs font-semibold ${
             isDark ? 'bg-gray-800/40 border-gray-800' : 'bg-gray-50 border-gray-100'
           }`}>
@@ -461,7 +569,12 @@ export default function FavoriteSyncModal({
             onClose={() => setShowSqlModal(false)}
           />
 
-          {totalCount === 0 ? (
+          {isLoadingDbData ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3">
+              <span className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              <p className="text-xs opacity-65 font-medium animate-pulse">Cargando favoritos de la base de datos...</p>
+            </div>
+          ) : totalCount === 0 ? (
             <div className="text-center py-8 opacity-40 text-sm italic">
               No se encontraron favoritos para mostrar.
             </div>
@@ -483,7 +596,7 @@ export default function FavoriteSyncModal({
               } else if (isSectionSecondary) {
                 sectionBorderClass = mode === 'save'
                   ? (isDark ? 'border-dashed border-yellow-500/30 bg-yellow-500/5' : 'border-dashed border-yellow-350 bg-yellow-50/20')
-                  : (isDark ? 'border-dashed border-blue-500/30 bg-blue-500/5' : 'border-dashed border-blue-300 bg-blue-50/20');
+                  : (isDark ? 'border-dashed border-blue-500/30 bg-blue-500/5' : 'border-dashed border-blue-300 bg-blue-55/20');
               } else {
                 sectionBorderClass = isDark ? 'border-gray-800 bg-gray-850/20' : 'border-gray-150 bg-gray-50/30';
               }
@@ -628,7 +741,7 @@ export default function FavoriteSyncModal({
           </button>
           <button
             type="button"
-            disabled={isSubmitting || selectedIds.size === 0}
+            disabled={isSubmitting || selectedIds.size === 0 || isLoadingDbData}
             onClick={handleConfirm}
             className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-1.5 text-black disabled:opacity-40 disabled:cursor-not-allowed ${
               mode === 'save'

@@ -14,6 +14,7 @@ import ConnectionModal from './ConnectionModal';
 import FavoriteNameModal from './FavoriteNameModal';
 import FavoriteSyncModal from './FavoriteSyncModal';
 import FavoriteTransferModal from './FavoriteTransferModal';
+import FavoriteDeleteModal from './FavoriteDeleteModal';
 import SqlInstructionsModal from './SqlInstructionsModal';
 import { saveAs } from 'file-saver';
 import Editor from '@monaco-editor/react';
@@ -84,8 +85,8 @@ export default function Sidebar() {
     history, removeHistory,
     favorites, favoriteSections, addFavorite, removeFavorite, runFavorite, addFavoriteSection, removeFavoriteSection, clearAllFavorites,
     toggleTheme, isDark, addTab, tabs, activeTabId, setActiveTab, showToast,
-    loadFavoritesFromDb, saveFavoritesToDb, deleteFavoriteFromDb, updateTabContent,
-    visibleObjectTypes, setVisibleObjectTypes, transferFavorites,
+    loadFavoritesFromDb, saveFavoritesToDb, deleteFavoriteFromDb, updateTabContent, updateFavoriteSql,
+    visibleObjectTypes, setVisibleObjectTypes, transferFavorites, removeMultipleFavorites,
   } = useAppStore();
 
   const activeConnection = connections.find(c => c.id === activeConnectionId);
@@ -97,8 +98,7 @@ export default function Sidebar() {
 
   const [expandedFavSections, setExpandedFavSections] = useState<Record<string, boolean>>({});
   const [hoveredFav, setHoveredFav] = useState<any>(null);
-  const [isConfirmDeleteAllOpen, setIsConfirmDeleteAllOpen] = useState(false);
-  const [deleteSectionsCheckbox, setDeleteSectionsCheckbox] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [favSearchQuery, setFavSearchQuery] = useState('');
   const [activeMatchIndex, setActiveMatchIndex] = useState<number>(-1);
@@ -685,12 +685,12 @@ export default function Sidebar() {
   const [showSqlInstructions, setShowSqlInstructions] = useState(false);
 
   const handleSaveFavoritesToDb = () => {
-    if (!activeConnection) {
-      showToast('Selecciona una conexión activa primero.', 'error');
+    if (connections.length === 0) {
+      showToast('Crea una conexión primero.', 'error');
       return;
     }
     if (favorites.length === 0) {
-      showToast('No tienes favoritos locales para guardar.', 'info');
+      showToast('No tienes favoritos para guardar.', 'info');
       return;
     }
     setSyncModal({
@@ -699,10 +699,14 @@ export default function Sidebar() {
     });
   };
 
-  const handleConfirmSave = async (selectedIds: string[]) => {
-    if (!activeConnection) return;
+  const handleConfirmSave = async (selectedIds: string[], selectedConnection?: Connection) => {
+    const conn = selectedConnection || activeConnection;
+    if (!conn) {
+      showToast('Selecciona una conexión primero.', 'error');
+      return;
+    }
     try {
-      await saveFavoritesToDb(activeConnection, selectedIds);
+      await saveFavoritesToDb(conn, selectedIds);
       showToast('Favoritos guardados en la BD con éxito.', 'success');
       setSyncModal(null);
     } catch (err: any) {
@@ -718,10 +722,11 @@ export default function Sidebar() {
   };
 
   const handleLoadFavoritesFromDb = async () => {
-    if (!activeConnection) {
-      showToast('Selecciona una conexión activa primero.', 'error');
+    if (connections.length === 0) {
+      showToast('Crea una conexión primero.', 'error');
       return;
     }
+    const defaultConn = activeConnection || connections[0];
     setIsSyncing(true);
     try {
       // 1. Fetch DB sections
@@ -729,7 +734,7 @@ export default function Sidebar() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          connection: activeConnection,
+          connection: defaultConn,
           sql: 'SELECT id, name FROM TKR_FAVORITOS_SECCIONES ORDER BY id'
         })
       });
@@ -748,7 +753,7 @@ export default function Sidebar() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          connection: activeConnection,
+          connection: defaultConn,
           sql: 'SELECT id, name, sql_query, seccion_id, created_at, last_run_at FROM TKR_FAVORITOS ORDER BY id'
         })
       });
@@ -761,11 +766,6 @@ export default function Sidebar() {
 
       const dbSections = secData.rows || [];
       const dbFavorites = favData.rows || [];
-
-      if (dbFavorites.length === 0) {
-        showToast('No hay favoritos guardados en la base de datos.', 'info');
-        return;
-      }
 
       setSyncModal({
         isOpen: true,
@@ -786,10 +786,11 @@ export default function Sidebar() {
     }
   };
 
-  const handleConfirmLoad = async (selectedIds: number[]) => {
-    if (!activeConnection) return;
+  const handleConfirmLoad = async (selectedIds: number[], selectedConnection?: Connection) => {
+    const conn = selectedConnection || activeConnection;
+    if (!conn) return;
     try {
-      await loadFavoritesFromDb(activeConnection, selectedIds);
+      await loadFavoritesFromDb(conn, selectedIds);
       showToast('Favoritos cargados de la BD con éxito.', 'success');
       setSyncModal(null);
     } catch (err: any) {
@@ -852,10 +853,57 @@ export default function Sidebar() {
     }
   };
 
-  const handleFavModalConfirm = (name: string, sectionId: string) => {
-    addFavorite(favModal.historyId, name, sectionId);
+  const handleFavModalConfirm = async (name: string, sectionId: string, saveToDb: boolean, overwrite: boolean) => {
+    if (overwrite) {
+      // Find the existing favorite with same name and update its SQL
+      const histItem = history.find(h => h.id === favModal.historyId);
+      const existingFav = visibleFavorites.find(f => f.name.toLowerCase() === name.toLowerCase());
+      if (existingFav && histItem) {
+        updateFavoriteSql(existingFav.id, histItem.sql);
+        if (saveToDb && activeConnection && existingFav.dbId != null) {
+          // Also update in DB by re-saving
+          try {
+            await saveFavoritesToDb(activeConnection, [existingFav.id]);
+            showToast(`"${name}" sobrescrito local y en la BD`, 'success');
+          } catch {
+            showToast(`"${name}" sobrescrito localmente (error al actualizar en la BD)`, 'info');
+          }
+        } else if (saveToDb && activeConnection) {
+          // Not yet in DB — save for first time
+          try {
+            await saveFavoritesToDb(activeConnection, [existingFav.id]);
+            showToast(`"${name}" sobrescrito y guardado en la BD`, 'success');
+          } catch {
+            showToast(`"${name}" sobrescrito localmente (error al guardar en la BD)`, 'info');
+          }
+        } else {
+          showToast(`"${name}" sobrescrito en favoritos`, 'success');
+        }
+      }
+    } else {
+      addFavorite(favModal.historyId, name, sectionId);
+      if (saveToDb && activeConnection) {
+        // Find the newly created favorite (last added with this name)
+        // We need to wait a tick for the store to update
+        await new Promise<void>(resolve => setTimeout(resolve, 50));
+        const newFav = useAppStore.getState().favorites.find(
+          f => f.name === name && f.sectionId === sectionId && !f.connectionId
+        );
+        if (newFav) {
+          try {
+            await saveFavoritesToDb(activeConnection, [newFav.id]);
+            showToast(`"${name}" guardado en favoritos y en la BD`, 'success');
+          } catch {
+            showToast(`"${name}" guardado localmente (error al guardar en la BD)`, 'info');
+          }
+        } else {
+          showToast(`"${name}" guardado en favoritos`, 'success');
+        }
+      } else {
+        showToast(`"${name}" guardado en favoritos`, 'success');
+      }
+    }
     setFavModal({ isOpen: false, historyId: '' });
-    showToast(`"${name}" guardado en favoritos`, 'success');
   };
 
   /**
@@ -876,14 +924,24 @@ export default function Sidebar() {
    * Si ya existe un tab con el mismo nombre Y el mismo SQL, navega a él.
    * Siempre actualiza lastRunAt.
    */
-  const openFavorite = (favId: string, name: string, sql: string) => {
-    const existing = tabs.find(t => t.title === name && t.query === sql);
+  const openFavorite = (fav: Favorite) => {
+    if (fav.connectionId) {
+      if (activeConnectionId !== fav.connectionId) {
+        const targetConn = connections.find(c => c.id === fav.connectionId);
+        if (targetConn) {
+          setActiveConnection(fav.connectionId);
+          showToast(`Se cambió a la conexión "${targetConn.name}" para ejecutar el favorito.`, 'info');
+        }
+      }
+    }
+
+    const existing = tabs.find(t => t.title === fav.name && t.query === fav.sql);
     if (existing) {
       setActiveTab(existing.id);
     } else {
-      addTab({ id: crypto.randomUUID(), title: name, query: sql, favoriteId: favId });
+      addTab({ id: crypto.randomUUID(), title: fav.name, query: fav.sql, favoriteId: fav.id });
     }
-    runFavorite(favId);
+    runFavorite(fav.id);
   };
 
   const renderFavoriteItem = (fav: Favorite, sectionName: string) => {
@@ -906,7 +964,7 @@ export default function Sidebar() {
         className="relative group/fav"
       >
         <div
-          onClick={() => openFavorite(fav.id, fav.name, fav.sql)}
+          onClick={() => openFavorite(fav)}
           onMouseEnter={(e) => {
             setHoveredFav(fav);
             setMousePos({ x: e.clientX + 15, y: e.clientY + 10 });
@@ -1380,10 +1438,7 @@ export default function Sidebar() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setDeleteSectionsCheckbox(false);
-                    setIsConfirmDeleteAllOpen(true);
-                  }}
+                  onClick={() => setIsDeleteModalOpen(true)}
                   disabled={visibleFavorites.length === 0}
                   className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors cursor-pointer flex items-center gap-1 ${
                     isDark 
@@ -1392,7 +1447,7 @@ export default function Sidebar() {
                   }`}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  Borrar todo
+                  Borrar
                 </button>
               </div>
             </div>
@@ -1591,6 +1646,7 @@ export default function Sidebar() {
           isDark={isDark}
           existingNames={existingFavoriteNames}
           sections={favoriteSections}
+          hasActiveConnection={!!activeConnectionId}
           onConfirm={handleFavModalConfirm}
           onCancel={() => setFavModal({ isOpen: false, historyId: '' })}
           onAddSection={(id, name) => addFavoriteSection(id, name)}
@@ -1644,12 +1700,14 @@ export default function Sidebar() {
           isOpen={syncModal.isOpen}
           isDark={isDark}
           mode={syncModal.mode}
-          localFavorites={favorites.filter(fav => !fav.connectionId)}
+          localFavorites={favorites}
           localSections={favoriteSections}
           dbFavorites={syncModal.dbFavorites}
           dbSections={syncModal.dbSections}
           onConfirm={syncModal.mode === 'save' ? handleConfirmSave : handleConfirmLoad}
           onCancel={() => setSyncModal(null)}
+          connections={connections}
+          activeConnectionId={activeConnectionId}
         />
       )}
 
@@ -1665,6 +1723,41 @@ export default function Sidebar() {
             showToast(`${newFavs.length} favorito(s) transferido(s) correctamente.`, 'success');
           }}
           onCancel={() => setIsTransferModalOpen(false)}
+        />
+      )}
+
+      {isDeleteModalOpen && (
+        <FavoriteDeleteModal
+          isOpen={isDeleteModalOpen}
+          isDark={isDark}
+          connections={connections}
+          favorites={favorites}
+          favoriteSections={favoriteSections}
+          onDelete={async (ids, deleteFromDb) => {
+            if (deleteFromDb) {
+              // Delete from DB for each favorite that has a dbId
+              const favsToDelete = favorites.filter(f => ids.includes(f.id) && f.dbId != null);
+              for (const fav of favsToDelete) {
+                const conn = connections.find(c => c.id === fav.connectionId);
+                if (conn && fav.dbId != null) {
+                  try {
+                    await deleteFavoriteFromDb(conn, fav.dbId);
+                  } catch {
+                    // continue with next
+                  }
+                }
+              }
+            }
+            removeMultipleFavorites(ids);
+            showToast(
+              deleteFromDb
+                ? `${ids.length} favorito(s) eliminado(s) local y de la BD.`
+                : `${ids.length} favorito(s) eliminado(s) localmente.`,
+              'success'
+            );
+            setIsDeleteModalOpen(false);
+          }}
+          onCancel={() => setIsDeleteModalOpen(false)}
         />
       )}
 
@@ -1855,65 +1948,7 @@ export default function Sidebar() {
         </div>
       )}
 
-      {/* Modal confirmacion borrar todos los favoritos */}
-      {isConfirmDeleteAllOpen && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-          <div className={`w-full max-w-sm rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 ${
-            isDark ? 'bg-gray-900 border-gray-700 text-gray-200 shadow-black/80' : 'bg-white border-gray-200 text-gray-800 shadow-gray-400/30'
-          }`}>
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-red-500/10 text-red-500">
-                <Trash2 className="w-5 h-5 animate-pulse" />
-              </div>
-              <div>
-                <h2 className="font-bold text-base">Borrar todos los favoritos</h2>
-                <p className="text-xs opacity-50">Esta acción no se puede deshacer</p>
-              </div>
-            </div>
-            <p className="text-sm">
-              ¿Estás seguro de que deseas eliminar permanentemente <strong>todos los favoritos</strong> guardados localmente?
-            </p>
-            <label className="flex items-center gap-2 px-1 py-0.5 rounded cursor-pointer select-none text-xs opacity-80 hover:opacity-100 transition-opacity">
-              <input
-                type="checkbox"
-                checked={deleteSectionsCheckbox}
-                onChange={(e) => setDeleteSectionsCheckbox(e.target.checked)}
-                className={`rounded border-gray-300 h-3.5 w-3.5 focus:ring-blue-500/20 text-blue-600 cursor-pointer transition-colors ${
-                  isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
-                }`}
-              />
-              <span>Borrar también las secciones personalizadas</span>
-            </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setIsConfirmDeleteAllOpen(false)}
-                className={`flex-1 py-2 rounded-lg text-sm border font-semibold transition-colors cursor-pointer ${
-                  isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-600'
-                }`}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  clearAllFavorites(deleteSectionsCheckbox);
-                  setIsConfirmDeleteAllOpen(false);
-                  showToast(
-                    deleteSectionsCheckbox
-                      ? 'Todos los favoritos y secciones locales han sido eliminados'
-                      : 'Todos los favoritos locales han sido eliminados',
-                    'success'
-                  );
-                }}
-                className="flex-1 py-2 rounded-lg text-sm font-semibold bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-500/20 transition-all hover:shadow-red-500/30 active:scale-[0.98] cursor-pointer"
-              >
-                Eliminar todo
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {compileErrorsModal && (
         <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
