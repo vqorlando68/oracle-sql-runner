@@ -525,10 +525,16 @@ export default function Sidebar() {
                   key={item.name}
                   onDoubleClick={() => handleObjectDoubleClick(actualName, actualType)}
                   onContextMenu={(e) => handleContextMenu(e, actualName, actualType, item.status)}
+                  draggable={actualType === 'TABLE'}
+                  onDragStart={(e) => {
+                    if (actualType === 'TABLE') {
+                      e.dataTransfer.setData('application/json', JSON.stringify({ type: 'TABLE', name: actualName }));
+                    }
+                  }}
                   className={`flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer transition-colors ${
                     isDark ? 'hover:bg-gray-800 text-gray-300' : 'hover:bg-gray-200 text-gray-700'
                   } ${isInvalid ? 'text-red-500 dark:text-red-400 font-semibold' : ''}`}
-                  title={`${item.name} (${item.status === 'INVALID' ? 'Inválido / Descompilado' : 'Válido'})\nDoble clic para cargar en el editor. Clic derecho para opciones.`}
+                  title={`${item.name} (${item.status === 'INVALID' ? 'Inválido / Descompilado' : 'Válido'})\nDoble clic para cargar en el editor. Clic derecho para opciones.${actualType === 'TABLE' ? ' Arrastra al Constructor SELECT.' : ''}`}
                 >
                   {icon}
                   <span className="truncate flex-1" style={{ fontSize: '11px' }}>{item.name}</span>

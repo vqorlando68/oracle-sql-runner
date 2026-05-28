@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { ExecResult, SqlTab } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
+import VisualQueryBuilder from '@/components/VisualQueryBuilder';
 import CompareObjectsModal from '@/components/CompareObjectsModal';
 import DescribeObjectModal from '@/components/DescribeObjectModal';
 import BackupModal from '@/components/BackupModal';
@@ -174,6 +175,7 @@ export default function Home() {
   const [formatModalOpen, setFormatModalOpen] = useState(false);
   const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
   const [isDiagramOpen, setIsDiagramOpen] = useState(false);
+  const [isQueryBuilderOpen, setIsQueryBuilderOpen] = useState(false);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -506,6 +508,18 @@ export default function Home() {
       });
     };
   }, [isAuthenticated, inactivityTimeoutEnabled, inactivityTimeoutMinutes, logout]);
+
+  // Global key listener to toggle Visual SELECT Query Builder
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && e.key.toLowerCase() === 'q') {
+        e.preventDefault();
+        setIsQueryBuilderOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
+  }, []);
 
   // Fetch schemas for active connection
   useEffect(() => {
@@ -2050,6 +2064,13 @@ export default function Home() {
           <TbBtn isDark={isDark} icon={<CalendarClock className={iconSize} />} label="Config. Historial" onClick={() => setHistorySettingsOpen(true)} />
           <TbBtn
             isDark={isDark}
+            icon={<Wand2 className={iconSize} />}
+            label="Constructor SELECT"
+            onClick={() => setIsQueryBuilderOpen(true)}
+            variant="success"
+          />
+          <TbBtn
+            isDark={isDark}
             icon={<Network className={iconSize} />}
             label="Diagrama Relacional"
             onClick={() => setIsDiagramOpen(true)}
@@ -2384,12 +2405,16 @@ export default function Home() {
                           key={tbl}
                           onClick={() => setMetadataTable(tbl)}
                           onDoubleClick={() => insertTextAtCursor(tbl.toLowerCase())}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('application/json', JSON.stringify({ type: 'TABLE', name: tbl }));
+                          }}
                           className={`px-1.5 py-1 rounded text-[11px] font-mono cursor-pointer transition-colors truncate select-none ${
                             metadataTable === tbl
                               ? (isDark ? 'bg-blue-500/15 text-blue-400 font-semibold' : 'bg-blue-50 text-blue-600 font-semibold')
                               : (isDark ? 'hover:bg-gray-900 text-gray-300' : 'hover:bg-gray-100 text-gray-700')
                           }`}
-                          title={`${tbl} (Doble clic para pegar)`}
+                          title={`${tbl} (Doble clic para pegar o arrastrar al Constructor SELECT)`}
                         >
                           📊 {tbl}
                         </div>
@@ -2831,6 +2856,13 @@ export default function Home() {
       <DiagramEditor
         isOpen={isDiagramOpen}
         onClose={() => setIsDiagramOpen(false)}
+        isDark={isDark}
+        activeConnection={activeConnection}
+        showToast={showToast}
+      />
+      <VisualQueryBuilder
+        isOpen={isQueryBuilderOpen}
+        onClose={() => setIsQueryBuilderOpen(false)}
         isDark={isDark}
         activeConnection={activeConnection}
         showToast={showToast}
