@@ -859,48 +859,58 @@ export default function Sidebar() {
     }
   };
 
-  const handleFavModalConfirm = async (name: string, sectionId: string, saveToDb: boolean, overwrite: boolean) => {
+  const handleFavModalConfirm = async (
+    name: string,
+    sectionId: string,
+    connectionId: string | undefined,
+    saveToDb: boolean,
+    overwrite: boolean
+  ) => {
+    const targetConn = connectionId ? connections.find(c => c.id === connectionId) : undefined;
     if (overwrite) {
-      // Find the existing favorite with same name and update its SQL
+      // Find the existing favorite with same name and same connectionId (or local)
       const histItem = history.find(h => h.id === favModal.historyId);
-      const existingFav = visibleFavorites.find(f => f.name.toLowerCase() === name.toLowerCase());
+      const existingFav = visibleFavorites.find(f =>
+        f.name.toLowerCase() === name.toLowerCase() &&
+        (connectionId ? f.connectionId === connectionId : !f.connectionId)
+      );
       if (existingFav && histItem) {
         updateFavoriteSql(existingFav.id, histItem.sql);
-        if (saveToDb && activeConnection && existingFav.dbId != null) {
+        if (saveToDb && targetConn && existingFav.dbId != null) {
           // Also update in DB by re-saving
           try {
-            await saveFavoritesToDb(activeConnection, [existingFav.id]);
+            await saveFavoritesToDb(targetConn, [existingFav.id]);
             showToast(`"${name}" sobrescrito local y en la BD`, 'success');
-          } catch {
-            showToast(`"${name}" sobrescrito localmente (error al actualizar en la BD)`, 'info');
+          } catch (err: any) {
+            showToast(`"${name}" sobrescrito localmente (error en la BD: ${err.message})`, 'info');
           }
-        } else if (saveToDb && activeConnection) {
+        } else if (saveToDb && targetConn) {
           // Not yet in DB — save for first time
           try {
-            await saveFavoritesToDb(activeConnection, [existingFav.id]);
+            await saveFavoritesToDb(targetConn, [existingFav.id]);
             showToast(`"${name}" sobrescrito y guardado en la BD`, 'success');
-          } catch {
-            showToast(`"${name}" sobrescrito localmente (error al guardar en la BD)`, 'info');
+          } catch (err: any) {
+            showToast(`"${name}" sobrescrito localmente (error en la BD: ${err.message})`, 'info');
           }
         } else {
           showToast(`"${name}" sobrescrito en favoritos`, 'success');
         }
       }
     } else {
-      addFavorite(favModal.historyId, name, sectionId);
-      if (saveToDb && activeConnection) {
+      addFavorite(favModal.historyId, name, sectionId, connectionId);
+      if (saveToDb && targetConn) {
         // Find the newly created favorite (last added with this name)
         // We need to wait a tick for the store to update
         await new Promise<void>(resolve => setTimeout(resolve, 50));
         const newFav = useAppStore.getState().favorites.find(
-          f => f.name === name && f.sectionId === sectionId && !f.connectionId
+          f => f.name === name && f.sectionId === sectionId && f.connectionId === connectionId
         );
         if (newFav) {
           try {
-            await saveFavoritesToDb(activeConnection, [newFav.id]);
+            await saveFavoritesToDb(targetConn, [newFav.id]);
             showToast(`"${name}" guardado en favoritos y en la BD`, 'success');
-          } catch {
-            showToast(`"${name}" guardado localmente (error al guardar en la BD)`, 'info');
+          } catch (err: any) {
+            showToast(`"${name}" guardado localmente (error en la BD: ${err.message})`, 'info');
           }
         } else {
           showToast(`"${name}" guardado en favoritos`, 'success');
@@ -1650,9 +1660,10 @@ export default function Sidebar() {
       {favModal.isOpen && (
         <FavoriteNameModal
           isDark={isDark}
-          existingNames={existingFavoriteNames}
+          favorites={favorites}
           sections={favoriteSections}
-          hasActiveConnection={!!activeConnectionId}
+          connections={connections}
+          defaultConnectionId={activeConnectionId || undefined}
           onConfirm={handleFavModalConfirm}
           onCancel={() => setFavModal({ isOpen: false, historyId: '' })}
           onAddSection={(id, name) => addFavoriteSection(id, name)}

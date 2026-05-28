@@ -48,8 +48,8 @@ interface AppState {
   purgeExpiredHistory: () => void;
 
   // Favorites
-  addFavorite: (historyId: string, name: string, sectionId: string) => void;
-  addFavoriteFromSql: (sql: string, name: string, sectionId: string) => void;
+  addFavorite: (historyId: string, name: string, sectionId: string, connectionId?: string) => void;
+  addFavoriteFromSql: (sql: string, name: string, sectionId: string, connectionId?: string) => void;
   removeFavorite: (favoriteId: string) => void;
   clearAllFavorites: (deleteSections?: boolean) => void;
   removeMultipleFavorites: (ids: string[]) => void;
@@ -187,7 +187,7 @@ export const useAppStore = create<AppState>()(
       }),
 
       // ── Favorites ────────────────────────────────────────────────────────────
-      addFavorite: (historyId, name, sectionId) => set((state) => {
+      addFavorite: (historyId, name, sectionId, connectionId) => set((state) => {
         const histItem = state.history.find(h => h.id === historyId);
         if (!histItem) return {};
         const newFav: Favorite = {
@@ -195,6 +195,7 @@ export const useAppStore = create<AppState>()(
           name,
           sql: histItem.sql,
           sectionId,
+          connectionId: connectionId || undefined,
           createdAt: new Date().toISOString(),
         };
         return {
@@ -234,12 +235,13 @@ export const useAppStore = create<AppState>()(
         };
       }),
 
-      addFavoriteFromSql: (sql, name, sectionId) => set((state) => {
+      addFavoriteFromSql: (sql, name, sectionId, connectionId) => set((state) => {
         const newFav: Favorite = {
           id: crypto.randomUUID(),
           name,
           sql,
           sectionId,
+          connectionId: connectionId || undefined,
           createdAt: new Date().toISOString(),
         };
         return { favorites: [...state.favorites, newFav] };

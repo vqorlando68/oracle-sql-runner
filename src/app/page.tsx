@@ -130,7 +130,7 @@ export default function Home() {
     isAuthenticated, login, logout,
     isDark, activeConnectionId, connections, addHistory,
     tabs, activeTabId, setActiveTab, addTab, removeTab, updateTabContent, formatOptions,
-    favorites, favoriteSections, addFavoriteFromSql, updateFavoriteSql, addFavoriteSection,
+    favorites, favoriteSections, addFavoriteFromSql, updateFavoriteSql, addFavoriteSection, saveFavoritesToDb,
     toast, hideToast, showToast,
     history, historyRetentionDays, setHistoryRetentionDays, purgeExpiredHistory,
     inactivityTimeoutEnabled, inactivityTimeoutMinutes, setInactivitySettings
@@ -1211,10 +1211,66 @@ export default function Home() {
     }
   };
 
-  const handleNewFavoriteConfirm = (name: string, sectionId: string) => {
-    addFavoriteFromSql(currentFocusedTab.query, name, sectionId);
+  const handleNewFavoriteConfirm = async (
+    name: string,
+    sectionId: string,
+    connectionId: string | undefined,
+    saveToDb: boolean,
+    overwrite: boolean
+  ) => {
+    const targetConn = connectionId ? connections.find(c => c.id === connectionId) : undefined;
+    if (overwrite) {
+      // Find the existing duplicate favorite in that connection and update it
+      const existingFav = favorites.find(f =>
+        f.name.toLowerCase() === name.toLowerCase() &&
+        (connectionId ? f.connectionId === connectionId : !f.connectionId)
+      );
+      if (existingFav) {
+        updateFavoriteSql(existingFav.id, currentFocusedTab.query);
+        if (saveToDb && targetConn && existingFav.dbId != null) {
+          // Also update in DB by re-saving
+          try {
+            await saveFavoritesToDb(targetConn, [existingFav.id]);
+            showToast(`"${name}" sobrescrito local y en la BD`, 'success');
+          } catch (err: any) {
+            showToast(`"${name}" sobrescrito localmente (error en la BD: ${err.message})`, 'info');
+          }
+        } else if (saveToDb && targetConn) {
+          // Not yet in DB — save for first time
+          try {
+            await saveFavoritesToDb(targetConn, [existingFav.id]);
+            showToast(`"${name}" sobrescrito y guardado en la BD`, 'success');
+          } catch (err: any) {
+            showToast(`"${name}" sobrescrito localmente (error en la BD: ${err.message})`, 'info');
+          }
+        } else {
+          showToast(`"${name}" sobrescrito en favoritos`, 'success');
+        }
+      }
+    } else {
+      addFavoriteFromSql(currentFocusedTab.query, name, sectionId, connectionId);
+      if (saveToDb && targetConn) {
+        // Find the newly created favorite (last added with this name)
+        // We need to wait a tick for the store to update
+        await new Promise<void>(resolve => setTimeout(resolve, 50));
+        const newFav = useAppStore.getState().favorites.find(
+          f => f.name === name && f.sectionId === sectionId && f.connectionId === connectionId
+        );
+        if (newFav) {
+          try {
+            await saveFavoritesToDb(targetConn, [newFav.id]);
+            showToast(`"${name}" guardado en favoritos y en la BD`, 'success');
+          } catch (err: any) {
+            showToast(`"${name}" guardado localmente (error en la BD: ${err.message})`, 'info');
+          }
+        } else {
+          showToast(`"${name}" guardado en favoritos`, 'success');
+        }
+      } else {
+        showToast(`"${name}" guardado en favoritos`, 'success');
+      }
+    }
     setSaveModal(null);
-    useAppStore.getState().showToast(`"${name}" guardado en favoritos`, 'success');
   };
 
   // ── F9: Execute single statement (selection or statement at cursor) ────────
@@ -2771,8 +2827,10 @@ export default function Home() {
       {saveModal === 'new' && (
         <FavoriteNameModal
           isDark={isDark}
-          existingNames={favorites.map(f => f.name)}
+          favorites={favorites}
           sections={favoriteSections}
+          connections={connections}
+          defaultConnectionId={activeConnectionId || undefined}
           initialName={activeTab?.title ?? ''}
           onConfirm={handleNewFavoriteConfirm}
           onCancel={() => setSaveModal(null)}

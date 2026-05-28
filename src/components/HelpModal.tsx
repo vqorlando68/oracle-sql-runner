@@ -13,7 +13,7 @@ interface HelpModalProps {
   onClose: () => void;
 }
 
-type TabType = 'queries' | 'schema' | 'favorites' | 'diagram' | 'compare' | 'backup' | 'tools' | 'oracle';
+type TabType = 'queries' | 'schema' | 'selectBuilder' | 'favorites' | 'diagram' | 'compare' | 'backup' | 'tools' | 'oracle';
 
 export default function HelpModal({ isOpen, isDark, onClose }: HelpModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>('queries');
@@ -23,6 +23,7 @@ export default function HelpModal({ isOpen, isDark, onClose }: HelpModalProps) {
   const tabs = [
     { id: 'queries', name: 'Editor y Consultas', icon: Code2, color: 'text-blue-500' },
     { id: 'schema', name: 'Explorador y Esquema', icon: Database, color: 'text-emerald-500' },
+    { id: 'selectBuilder', name: 'Constructor SELECT', icon: Wand2, color: 'text-lime-500' },
     { id: 'favorites', name: 'Gestión de Favoritos', icon: Star, color: 'text-amber-500' },
     { id: 'diagram', name: 'Modelo Relación (DER)', icon: Network, color: 'text-indigo-500' },
     { id: 'compare', name: 'Comparar Objetos', icon: GitCompare, color: 'text-cyan-500' },
@@ -191,6 +192,61 @@ export default function HelpModal({ isOpen, isDark, onClose }: HelpModalProps) {
                   </h4>
                   <p className="opacity-70 pl-2">
                     En bases de datos con miles de objetos, cargar el esquema completo puede ralentizar la interfaz. Haz clic derecho sobre la pestaña <strong>Objetos</strong> para filtrar qué categorías de objetos deseas consultar (por ejemplo, desmarcar indices o triggers si no los vas a ocupar), optimizando considerablemente los tiempos de carga y memoria.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ── TABS: SELECT BUILDER ── */}
+            {activeTab === 'selectBuilder' && (
+              <div className="space-y-5">
+                <p className="opacity-70">
+                  El <strong>Constructor SELECT</strong> (Visual Query Builder) es un entorno interactivo y visual que permite estructurar consultas <code>SELECT</code> complejas sin necesidad de escribir código a mano, ideal para formular uniones, filtros y agrupaciones de forma intuitiva.
+                </p>
+
+                <div className="space-y-4">
+                  <h4 className="font-bold text-xs flex items-center gap-2 border-b border-gray-500/10 pb-1.5">
+                    <Layers className="w-3.5 h-3.5 text-lime-500" />
+                    Flujo de Trabajo del Constructor
+                  </h4>
+                  <ul className="space-y-3 pl-2">
+                    <li className="flex items-start gap-3">
+                      <ChevronRight className="w-3.5 h-3.5 text-lime-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <strong>Agregar Tablas:</strong> Haz clic en el botón para agregar una tabla o arrástrala desde el Explorador de Tablas lateral del panel de la aplicación.
+                      </div>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ChevronRight className="w-3.5 h-3.5 text-lime-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <strong>Configurar Relaciones (JOINS):</strong> Define uniones de tipo <code>INNER JOIN</code>, <code>LEFT JOIN</code> o <code>RIGHT JOIN</code> entre las tablas cargadas seleccionando las columnas de vinculación correspondientes.
+                      </div>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ChevronRight className="w-3.5 h-3.5 text-lime-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <strong>Selección de Columnas:</strong> Elige qué columnas de cada tabla se incluirán en el resultado, asignando alias si es necesario y modificando su orden.
+                      </div>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ChevronRight className="w-3.5 h-3.5 text-lime-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <strong>Filtros Avanzados (WHERE):</strong> Añade condiciones de filtrado simples o complejas organizadas por grupos lógicos (<code>AND</code> / <code>OR</code>) para refinar los datos devueltos.
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-bold text-xs flex items-center gap-2 border-b border-gray-500/10 pb-1.5">
+                    <RefreshCw className="w-3.5 h-3.5 text-lime-500" />
+                    Vista Previa del SQL y Persistencia
+                  </h4>
+                  <p className="opacity-70 pl-2">
+                    A medida que modificas la estructura visual, el panel inferior genera y actualiza en tiempo real la sentencia SQL resultante. Puedes copiar este SQL, enviarlo directamente al editor principal con el botón <strong>Aplicar en el Editor</strong>, o guardar tu diseño completo como favorito. 
+                  </p>
+                  <p className="opacity-70 pl-2">
+                    Para reanudar un diseño posteriormente, la consulta generada incluye un comentario especial de metadatos al final. Al cargar una consulta con este formato en el constructor, este decodificará automáticamente el estado visual completo de las tablas, joins y condiciones.
                   </p>
                 </div>
               </div>
