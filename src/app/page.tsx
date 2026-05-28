@@ -19,7 +19,7 @@ import {
   Scissors, Clipboard, ClipboardPaste, CheckCircle2, Undo2, CalendarClock, FilePlus,
   Undo, Redo, Hammer, Save, FolderOpen, Network, Activity, GitCompare, Eye, EyeOff,
   ChevronDown, ChevronUp, Maximize2, Minimize2, RefreshCw, Folder, ChevronRight,
-  Package, LogOut, Key, Mail, Phone, ExternalLink, Copy, Sparkles, Code2, Cpu, HelpCircle
+  Package, LogOut, Key, Mail, Phone, ExternalLink, Copy, Sparkles, Code2, Cpu, HelpCircle, Terminal
 } from 'lucide-react';
 import { ExecResult, SqlTab } from '@/types';
 import DiagramEditor from '@/components/DiagramEditor';
@@ -250,6 +250,7 @@ export default function Home() {
 
   // Save modal: 'overwrite' = confirm overwrite existing fav | 'new' = create new fav
   const [saveModal, setSaveModal] = useState<'overwrite' | 'new' | null>(null);
+  const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
   const [passwordInput, setPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -1989,17 +1990,35 @@ export default function Home() {
   const iconSize = 'w-[18px] h-[18px]';
   const bg = isDark ? 'bg-gray-950 text-gray-200' : 'bg-white text-gray-800';
 
+  const triggerCls = (menuId: string) => `px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer select-none ${
+    activeMenu === menuId
+      ? (isDark ? 'bg-gray-800 text-blue-400 font-bold' : 'bg-gray-200 text-blue-700 font-bold')
+      : (isDark ? 'hover:bg-gray-800/80 text-gray-300 hover:text-gray-100' : 'hover:bg-gray-200/55 text-gray-700 hover:text-gray-950')
+  }`;
+
+  const menuItemCls = () => `w-full flex items-center justify-between py-1.5 px-3 rounded-lg text-xs transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer ${
+    isDark
+      ? 'hover:bg-gray-800/85 text-gray-300 hover:text-gray-100 disabled:hover:bg-transparent'
+      : 'hover:bg-gray-100 text-gray-700 hover:text-gray-900 disabled:hover:bg-transparent'
+  }`;
+
+  const MenuSep = () => <div className={`h-px my-1 ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`} />;
+
   return (
     <main className={`flex h-screen w-full overflow-hidden ${bg} font-sans transition-colors duration-300`}>
       <Sidebar />
       
       <div className="flex-1 flex flex-col min-w-0">
-        {/* ── Icon Toolbar ───────────────────────────────────────────── */}
-        <div className={`h-11 border-b flex items-center px-2 gap-0.5 overflow-x-auto custom-scrollbar ${
+        {/* ── Menu Toolbar ───────────────────────────────────────────── */}
+        <div className={`relative h-11 border-b flex items-center px-4 gap-1.5 z-40 ${
           isDark ? 'border-gray-800 bg-gray-900/60' : 'border-gray-200 bg-gray-50/80'
         }`}>
+          {activeMenu && (
+            <div className="fixed inset-0 z-30" onClick={() => setActiveMenu(null)} />
+          )}
+
           {/* Connection indicator */}
-          <div className="flex items-center mr-1">
+          <div className="flex items-center mr-2">
             {activeConnection ? (
               <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-500 font-medium">
                 <CheckCircle className="w-3.5 h-3.5" /> {activeConnection.name}
@@ -2013,156 +2032,287 @@ export default function Home() {
 
           <TbSep isDark={isDark} />
 
-          {/* ── Group: New / Clear ── */}
-          <TbBtn isDark={isDark} icon={<FilePlus className={iconSize} />} label="Nuevo Tab" onClick={() => addTab({ id: crypto.randomUUID(), title: 'Query', query: '' })} />
-          <TbBtn isDark={isDark} icon={<Eraser className={iconSize} />} label="Limpiar" onClick={() => updateTabContent(currentFocusedTab.id, '')} />
+          {/* Menú Archivo */}
+          <div className="relative">
+            <button
+              onClick={() => setActiveMenu(activeMenu === 'file' ? null : 'file')}
+              className={triggerCls('file')}
+            >
+              Archivo
+            </button>
+            {activeMenu === 'file' && (
+              <div className={`absolute top-full left-0 mt-1 z-50 min-w-[220px] rounded-xl shadow-2xl border p-1 flex flex-col gap-0.5 ${
+                isDark ? 'bg-gray-950/95 border-gray-800 text-gray-200 backdrop-blur-md' : 'bg-white/95 border-gray-250 text-gray-850 backdrop-blur-md shadow-gray-300/40'
+              }`}>
+                <button
+                  onClick={() => { addTab({ id: crypto.randomUUID(), title: 'Query', query: '' }); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><FilePlus className={iconSize} /> Nuevo Tab</span>
+                </button>
+                <button
+                  onClick={() => { handleOpenFileClick(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><FolderOpen className={iconSize} /> Abrir archivo</span>
+                </button>
+                <button
+                  disabled={!activeTab?.query?.trim()}
+                  onClick={() => { handleSaveToFile(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Save className={iconSize} /> Guardar en archivo</span>
+                </button>
+                <button
+                  disabled={!activeTab?.query?.trim()}
+                  onClick={() => { handleSave(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2">
+                    {activeFavorite ? <BookmarkCheck className={iconSize} /> : <BookmarkPlus className={iconSize} />}
+                    {activeFavorite ? `Sobreescribir "${activeFavorite.name}"` : 'Guardar como favorito'}
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
 
-          <TbSep isDark={isDark} />
+          {/* Menú Edición */}
+          <div className="relative">
+            <button
+              onClick={() => setActiveMenu(activeMenu === 'edit' ? null : 'edit')}
+              className={triggerCls('edit')}
+            >
+              Edición
+            </button>
+            {activeMenu === 'edit' && (
+              <div className={`absolute top-full left-0 mt-1 z-50 min-w-[200px] rounded-xl shadow-2xl border p-1 flex flex-col gap-0.5 ${
+                isDark ? 'bg-gray-950/95 border-gray-800 text-gray-200 backdrop-blur-md' : 'bg-white/95 border-gray-250 text-gray-850 backdrop-blur-md shadow-gray-300/40'
+              }`}>
+                <button
+                  onClick={() => { updateTabContent(currentFocusedTab.id, ''); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Eraser className={iconSize} /> Limpiar Editor</span>
+                </button>
+                <MenuSep />
+                <button
+                  onClick={() => { handleUndo(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Undo className={iconSize} /> Deshacer</span>
+                </button>
+                <button
+                  onClick={() => { handleRedo(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Redo className={iconSize} /> Rehacer</span>
+                </button>
+                <MenuSep />
+                <button
+                  onClick={() => { handleCut(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Scissors className={iconSize} /> Cortar</span>
+                </button>
+                <button
+                  onClick={() => { handleCopy(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Clipboard className={iconSize} /> Copiar</span>
+                </button>
+                <button
+                  onClick={() => { handlePaste(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><ClipboardPaste className={iconSize} /> Pegar</span>
+                </button>
+              </div>
+            )}
+          </div>
 
-          {/* ── Group: Clipboard & History ── */}
-          <TbBtn isDark={isDark} icon={<Undo className={iconSize} />} label="Deshacer" onClick={handleUndo} />
-          <TbBtn isDark={isDark} icon={<Redo className={iconSize} />} label="Rehacer" onClick={handleRedo} />
-          <TbSep isDark={isDark} />
-          <TbBtn isDark={isDark} icon={<Scissors className={iconSize} />} label="Cortar" onClick={handleCut} />
-          <TbBtn isDark={isDark} icon={<Clipboard className={iconSize} />} label="Copiar" onClick={handleCopy} />
-          <TbBtn isDark={isDark} icon={<ClipboardPaste className={iconSize} />} label="Pegar" onClick={handlePaste} />
+          {/* Menú Ejecución */}
+          <div className="relative">
+            <button
+              onClick={() => setActiveMenu(activeMenu === 'execute' ? null : 'execute')}
+              className={triggerCls('execute')}
+            >
+              Ejecución
+            </button>
+            {activeMenu === 'execute' && (
+              <div className={`absolute top-full left-0 mt-1 z-50 min-w-[240px] rounded-xl shadow-2xl border p-1 flex flex-col gap-0.5 ${
+                isDark ? 'bg-gray-950/95 border-gray-800 text-gray-200 backdrop-blur-md' : 'bg-white/95 border-gray-250 text-gray-850 backdrop-blur-md shadow-gray-300/40'
+              }`}>
+                <button
+                  disabled={isExecuting || !activeConnection}
+                  onClick={() => { handleExecuteStatement(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2">
+                    {isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <Play className={iconSize} />}
+                    Ejecutar Sentencia
+                  </span>
+                  <span className="text-[10px] opacity-40 font-mono">F9</span>
+                </button>
+                <button
+                  disabled={isExecuting || !activeConnection}
+                  onClick={() => { handleExecuteScript(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2">
+                    {isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <PlayCircle className={iconSize} />}
+                    Ejecutar Script
+                  </span>
+                  <span className="text-[10px] opacity-40 font-mono">F5</span>
+                </button>
+                <button
+                  disabled={isExecuting || !activeConnection}
+                  onClick={() => { handleCompile(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2">
+                    {isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <Hammer className={iconSize} />}
+                    Compilar PL/SQL
+                  </span>
+                </button>
+                <button
+                  disabled={isExecuting || !activeConnection}
+                  onClick={() => { handleExplainPlan(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2">
+                    {isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <Activity className={iconSize} />}
+                    Explain Plan
+                  </span>
+                </button>
+                <MenuSep />
+                <button
+                  onClick={() => { handleFormat(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Wand2 className={iconSize} /> Formatear SQL</span>
+                </button>
+                <button
+                  onClick={() => { setFormatModalOpen(true); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Settings2 className={iconSize} /> Config. Formato</span>
+                </button>
+                <MenuSep />
+                <label className={`w-full flex items-center gap-2 py-1.5 px-3 rounded-lg text-xs transition-colors cursor-pointer select-none ${
+                  isDark ? 'hover:bg-gray-800 text-gray-300 hover:text-gray-100' : 'hover:bg-gray-100 text-gray-700 hover:text-gray-900'
+                }`}>
+                  <input 
+                    type="checkbox" 
+                    checked={enableDbmsOutput} 
+                    onChange={(e) => {
+                      setEnableDbmsOutput(e.target.checked);
+                      setActiveMenu(null);
+                    }} 
+                    className="rounded border-gray-300 w-3 h-3 cursor-pointer"
+                  />
+                  <span className="flex items-center gap-2">
+                    <Terminal className={iconSize} />
+                    Activar DBMS_OUTPUT
+                  </span>
+                </label>
+              </div>
+            )}
+          </div>
 
-          <TbSep isDark={isDark} />
+          {/* Menú Transacciones */}
+          <div className="relative">
+            <button
+              onClick={() => setActiveMenu(activeMenu === 'transaction' ? null : 'transaction')}
+              className={triggerCls('transaction')}
+            >
+              Transacciones
+            </button>
+            {activeMenu === 'transaction' && (
+              <div className={`absolute top-full left-0 mt-1 z-50 min-w-[160px] rounded-xl shadow-2xl border p-1 flex flex-col gap-0.5 ${
+                isDark ? 'bg-gray-950/95 border-gray-800 text-gray-200 backdrop-blur-md' : 'bg-white/95 border-gray-250 text-gray-850 backdrop-blur-md shadow-gray-300/40'
+              }`}>
+                <button
+                  disabled={!activeConnection}
+                  onClick={() => { handleCommit(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2 text-green-500 font-semibold"><CheckCircle2 className={iconSize} /> COMMIT</span>
+                </button>
+                <button
+                  disabled={!activeConnection}
+                  onClick={() => { handleRollback(); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2 text-red-500 font-semibold"><Undo2 className={iconSize} /> ROLLBACK</span>
+                </button>
+              </div>
+            )}
+          </div>
 
-          {/* ── Group: Format / Save ── */}
-          <TbBtn isDark={isDark} icon={<Wand2 className={iconSize} />} label="Formatear SQL" onClick={handleFormat} variant="primary" />
-          <TbBtn isDark={isDark} icon={<Settings2 className={iconSize} />} label="Config. Formato" onClick={() => setFormatModalOpen(true)} />
-          <TbBtn
-            isDark={isDark}
-            icon={activeFavorite ? <BookmarkCheck className={iconSize} /> : <BookmarkPlus className={iconSize} />}
-            label={activeFavorite ? `Sobreescribir "${activeFavorite.name}"` : 'Guardar como favorito'}
-            onClick={handleSave}
-            disabled={!activeTab?.query?.trim()}
-            variant="warning"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={<Save className={iconSize} />}
-            label="Guardar en archivo"
-            onClick={handleSaveToFile}
-            disabled={!activeTab?.query?.trim()}
-            variant="success"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={<FolderOpen className={iconSize} />}
-            label="Abrir archivo"
-            onClick={handleOpenFileClick}
-            variant="default"
-          />
+          {/* Menú Herramientas */}
+          <div className="relative">
+            <button
+              onClick={() => setActiveMenu(activeMenu === 'tools' ? null : 'tools')}
+              className={triggerCls('tools')}
+            >
+              Herramientas
+            </button>
+            {activeMenu === 'tools' && (
+              <div className={`absolute top-full left-0 mt-1 z-50 min-w-[220px] rounded-xl shadow-2xl border p-1 flex flex-col gap-0.5 ${
+                isDark ? 'bg-gray-950/95 border-gray-800 text-gray-200 backdrop-blur-md' : 'bg-white/95 border-gray-250 text-gray-850 backdrop-blur-md shadow-gray-300/40'
+              }`}>
+                <button
+                  onClick={() => { setIsQueryBuilderOpen(true); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Wand2 className={iconSize} /> Constructor SELECT</span>
+                </button>
+                <button
+                  onClick={() => { setIsDiagramOpen(true); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Network className={iconSize} /> Diagrama Relacional</span>
+                </button>
+                <button
+                  onClick={() => { setIsCompareOpen(true); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><GitCompare className={iconSize} /> Comparar Objetos</span>
+                </button>
+                <button
+                  onClick={() => { setIsBackupOpen(true); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><Database className={iconSize} /> Copia de Seguridad</span>
+                </button>
+                <MenuSep />
+                <button
+                  onClick={() => { setHistorySettingsOpen(true); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><CalendarClock className={iconSize} /> Config. Historial</span>
+                </button>
+                <button
+                  onClick={() => { setShowMetadataPanel(!showMetadataPanel); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2">
+                    {showMetadataPanel ? <EyeOff className={iconSize} /> : <Eye className={iconSize} />}
+                    {showMetadataPanel ? "Ocultar Explorador" : "Mostrar Explorador"}
+                  </span>
+                </button>
+                <MenuSep />
+                <button
+                  onClick={() => { setIsHelpOpen(true); setActiveMenu(null); }}
+                  className={menuItemCls()}
+                >
+                  <span className="flex items-center gap-2"><HelpCircle className={iconSize} /> Ayuda</span>
+                </button>
+              </div>
+            )}
+          </div>
 
-          <TbSep isDark={isDark} />
-
-          {/* ── Group: Execute ── */}
-          <TbBtn
-            isDark={isDark}
-            icon={isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <Play className={iconSize} />}
-            label="Ejecutar Statement"
-            shortcut="F9"
-            onClick={handleExecuteStatement}
-            disabled={isExecuting || !activeConnection}
-            variant="primary"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <PlayCircle className={iconSize} />}
-            label="Ejecutar Script"
-            shortcut="F5"
-            onClick={handleExecuteScript}
-            disabled={isExecuting || !activeConnection}
-            variant="primary"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <Hammer className={iconSize} />}
-            label="Compilar PL/SQL"
-            onClick={handleCompile}
-            disabled={isExecuting || !activeConnection}
-            variant="primary"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={isExecuting ? <Loader2 className={`${iconSize} animate-spin`} /> : <Activity className={iconSize} />}
-            label="Explain Plan"
-            onClick={handleExplainPlan}
-            disabled={isExecuting || !activeConnection}
-            variant="primary"
-          />
-
-          <TbSep isDark={isDark} />
-
-          {/* ── Group: Transaction ── */}
-          <TbBtn
-            isDark={isDark}
-            icon={<CheckCircle2 className={iconSize} />}
-            label="COMMIT"
-            onClick={handleCommit}
-            disabled={!activeConnection}
-            variant="success"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={<Undo2 className={iconSize} />}
-            label="ROLLBACK"
-            onClick={handleRollback}
-            disabled={!activeConnection}
-            variant="danger"
-          />
-
-          <TbSep isDark={isDark} />
-
-          {/* ── Group: Settings ── */}
-          <TbBtn isDark={isDark} icon={<CalendarClock className={iconSize} />} label="Config. Historial" onClick={() => setHistorySettingsOpen(true)} />
-          <TbBtn
-            isDark={isDark}
-            icon={<Wand2 className={iconSize} />}
-            label="Constructor SELECT"
-            onClick={() => setIsQueryBuilderOpen(true)}
-            variant="success"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={<Network className={iconSize} />}
-            label="Diagrama Relacional"
-            onClick={() => setIsDiagramOpen(true)}
-            variant="primary"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={<GitCompare className={iconSize} />}
-            label="Comparar Objetos"
-            onClick={() => setIsCompareOpen(true)}
-            variant="primary"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={<Database className={iconSize} />}
-            label="Copia de Seguridad"
-            onClick={() => setIsBackupOpen(true)}
-            variant="primary"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={showMetadataPanel ? <EyeOff className={iconSize} /> : <Eye className={iconSize} />}
-            label={showMetadataPanel ? "Ocultar Explorador de Tablas" : "Mostrar Explorador de Tablas"}
-            onClick={() => setShowMetadataPanel(!showMetadataPanel)}
-            active={showMetadataPanel}
-            variant="success"
-          />
-          <TbBtn
-            isDark={isDark}
-            icon={<HelpCircle className={iconSize} />}
-            label="Ayuda"
-            onClick={() => setIsHelpOpen(true)}
-            variant="default"
-          />
-          
-          {/* DBMS Output toggle (compact) & Log Out Button */}
           <div className="ml-auto flex items-center gap-2">
             <label className={`flex items-center gap-1.5 text-xs cursor-pointer px-2.5 py-1 rounded-full transition-colors ${
               enableDbmsOutput
