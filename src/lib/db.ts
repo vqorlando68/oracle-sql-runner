@@ -174,7 +174,7 @@ export async function executeOracleQuery(
            DBMS_OUTPUT.GET_LINES(:p_lines, :p_numlines);
          END;`,
         {
-          p_lines: { type: oracledb.STRING, dir: oracledb.BIND_OUT, maxArraySize: 32767 },
+          p_lines: { type: oracledb.STRING, dir: oracledb.BIND_OUT, maxArraySize: 32767, maxSize: 32767 },
           p_numlines: { type: oracledb.NUMBER, dir: oracledb.BIND_INOUT, val: 32767 }
         }
       );
