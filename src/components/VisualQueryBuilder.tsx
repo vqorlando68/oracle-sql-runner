@@ -343,7 +343,24 @@ export default function VisualQueryBuilder({
   // ----------------------------------------------------
   // Table addition / removal
   // ----------------------------------------------------
-  const handleAddTable = (tableName: string, x = 100, y = 100) => {
+  const handleAddTable = (tableName: string, x?: number, y?: number) => {
+    let finalX = x;
+    let finalY = y;
+
+    if (finalX === undefined || finalY === undefined) {
+      if (design.tables.length === 0) {
+        finalX = 100;
+        finalY = 100;
+      } else {
+        const rightmostX = Math.max(...design.tables.map(t => t.x + t.width));
+        finalX = rightmostX + 50;
+        const rightmostTable = design.tables.reduce((prev, current) => 
+          (prev.x + prev.width > current.x + current.width) ? prev : current
+        );
+        finalY = rightmostTable.y;
+      }
+    }
+
     const exists = design.tables.some(t => t.name === tableName);
     if (exists) {
       // Suggest a unique alias
@@ -358,12 +375,12 @@ export default function VisualQueryBuilder({
 
       setDupTableModal({
         tableName,
-        x,
-        y,
+        x: finalX,
+        y: finalY,
         suggestedAlias
       });
     } else {
-      handleAddTableInstance(tableName, '', x, y);
+      handleAddTableInstance(tableName, '', finalX, finalY);
     }
   };
 
@@ -1691,13 +1708,13 @@ export default function VisualQueryBuilder({
                     onClick={() => handleAddTable(tbl)}
                     className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-grab transition-all flex items-center justify-between group ${
                       isDark 
-                        ? 'bg-gray-950/40 border-gray-850 hover:border-blue-500/30 text-gray-300 hover:text-gray-100 hover:bg-gray-800/20' 
-                        : 'bg-gray-50 border-gray-200 hover:border-blue-500/30 text-gray-700 hover:text-blue-600 hover:bg-blue-50/20'
+                        ? 'bg-blue-950/15 border-blue-900/30 text-blue-300 hover:bg-yellow-500/10 hover:border-yellow-500/40 hover:text-yellow-300' 
+                        : 'bg-blue-50/40 border-blue-200/60 text-blue-800 hover:bg-yellow-50 hover:border-yellow-400/60 hover:text-yellow-750'
                     }`}
                     title="Arrastra al lienzo o haz clic para agregar"
                   >
                     <span className="truncate">📊 {tbl}</span>
-                    <Plus className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-blue-500" />
+                    <Plus className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-yellow-500 dark:text-yellow-400" />
                   </div>
                 ))
             ) : (
