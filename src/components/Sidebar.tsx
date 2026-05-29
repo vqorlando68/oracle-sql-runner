@@ -78,6 +78,27 @@ const getTypeMetadata = (type: string) => {
   };
 };
 
+// Helper to highlight matching text in search
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  if (!query || !query.trim()) return <>{text}</>;
+  const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const regex = new RegExp(`(${escapedQuery})`, 'gi');
+  const parts = text.split(regex);
+  return (
+    <>
+      {parts.map((part, i) => 
+        regex.test(part) ? (
+          <mark key={i} className="bg-yellow-500/35 text-yellow-750 dark:bg-yellow-500/25 dark:text-yellow-400 rounded px-0.5 font-bold">
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+}
+
 // ─── Sidebar principal ────────────────────────────────────────────────────────
 export default function Sidebar() {
   const {
@@ -117,7 +138,12 @@ export default function Sidebar() {
   const matchedFavItems = useMemo(() => {
     if (!favSearchQuery.trim()) return [];
     const query = favSearchQuery.toLowerCase();
-    const list: Array<{ type: 'section' | 'favorite'; id: string; parentId?: string }> = [];
+    const list: Array<{ 
+      type: 'section' | 'favorite'; 
+      id: string; 
+      parentId?: string; 
+      connectionFolderId?: string;
+    }> = [];
     
     // Locales folder match
     const isLocalesMatch = 'locales'.includes(query);
@@ -125,39 +151,58 @@ export default function Sidebar() {
       list.push({ type: 'section', id: 'locales-folder' });
     }
 
-    // Active connection folder match
-    if (activeConnection) {
-      const isConnMatch = activeConnection.name.toLowerCase().includes(query);
+    // Connection folders match
+    connectionsToShow.forEach(conn => {
+      const isConnMatch = conn.name.toLowerCase().includes(query);
       if (isConnMatch) {
-        list.push({ type: 'section', id: 'connection-folder' });
-      }
-    }
-
-    // Local favorites match
-    const localFavs = visibleFavorites.filter(f => !f.connectionId);
-    localFavs.forEach(fav => {
-      if (fav.name.toLowerCase().includes(query)) {
-        list.push({ type: 'favorite', id: fav.id, parentId: 'locales-folder' });
+        list.push({ type: 'section', id: `conn-folder-${conn.id}` });
       }
     });
 
-    // Synced favorites match by section
+    // Local favorites match (search both name and SQL query)
+    const localFavs = visibleFavorites.filter(f => !f.connectionId);
+    localFavs.forEach(fav => {
+      if (fav.name.toLowerCase().includes(query) || (fav.sql && fav.sql.toLowerCase().includes(query))) {
+        list.push({ 
+          type: 'favorite', 
+          id: fav.id, 
+          parentId: 'locales-folder' 
+        });
+      }
+    });
+
+    // Synced favorites match by section (search both name and SQL query)
     favoriteSections.forEach(sec => {
       const secMatch = sec.name.toLowerCase().includes(query);
       if (secMatch) {
-        list.push({ type: 'section', id: sec.id });
+        // Add section nodes for connections containing favorites in this section
+        connectionsToShow.forEach(conn => {
+          const connFavs = visibleFavorites.filter(f => f.connectionId === conn.id && f.sectionId === sec.id);
+          if (connFavs.length > 0) {
+            list.push({ 
+              type: 'section', 
+              id: `${conn.id}-${sec.id}`, 
+              connectionFolderId: `conn-folder-${conn.id}` 
+            });
+          }
+        });
       }
       
       const secFavs = visibleFavorites.filter(f => f.connectionId && f.sectionId === sec.id);
       secFavs.forEach(fav => {
-        if (fav.name.toLowerCase().includes(query)) {
-          list.push({ type: 'favorite', id: fav.id, parentId: sec.id });
+        if (fav.name.toLowerCase().includes(query) || (fav.sql && fav.sql.toLowerCase().includes(query))) {
+          list.push({ 
+            type: 'favorite', 
+            id: fav.id, 
+            parentId: `${fav.connectionId}-${fav.sectionId}`,
+            connectionFolderId: `conn-folder-${fav.connectionId}`
+          });
         }
       });
     });
     
     return list;
-  }, [favSearchQuery, favoriteSections, visibleFavorites, activeConnection]);
+  }, [favSearchQuery, favoriteSections, visibleFavorites, activeConnection, connectionsToShow]);
 
   // Reset active match index when query or matches change
   useEffect(() => {
@@ -173,37 +218,58 @@ export default function Sidebar() {
     if (activeMatchIndex >= 0 && activeMatchIndex < matchedFavItems.length) {
       const activeItem = matchedFavItems[activeMatchIndex];
       
-      // Auto-expand parent section if it's a favorite child
-      if (activeItem.type === 'favorite' && activeItem.parentId) {
-        setExpandedFavSections(prev => {
-          const next = { ...prev, [activeItem.parentId!]: true };
-          if (activeItem.parentId !== 'locales-folder') {
-            next['connection-folder'] = true;
+      setExpandedFavSections(prev => {
+        const next = { ...prev };
+        
+        // Auto-expand parent section(s) if it's a favorite child
+        if (activeItem.type === 'favorite') {
+          if (activeItem.parentId) {
+            next[activeItem.parentId] = true;
           }
-          return next;
-        });
-      }
+          if (activeItem.connectionFolderId) {
+            next[activeItem.connectionFolderId] = true;
+          }
+        }
+        
+        // Auto-expand connection-folder if a section inside it is matched
+        if (activeItem.type === 'section') {
+          if (activeItem.connectionFolderId) {
+            next[activeItem.connectionFolderId] = true;
+          }
+        }
+        
+        return next;
+      });
 
-      // Auto-expand connection-folder if a section inside it is matched
-      if (activeItem.type === 'section' && activeItem.id !== 'connection-folder' && activeItem.id !== 'locales-folder') {
-        setExpandedFavSections(prev => ({
-          ...prev,
-          'connection-folder': true
-        }));
-      }
-
-      // Scroll the highlighted element into view
+      // Scroll the highlighted element into view and open its preview card
       const timer = setTimeout(() => {
         const elementId = `fav-tree-node-${activeItem.type}-${activeItem.id}`;
         const el = document.getElementById(elementId);
         if (el) {
           el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          
+          // Programmatically show the preview card next to the item if it's a favorite
+          if (activeItem.type === 'favorite') {
+            const favObj = favorites.find(f => f.id === activeItem.id);
+            if (favObj) {
+              const rect = el.getBoundingClientRect();
+              setMousePos({
+                x: rect.right + 15,
+                y: rect.top - 10
+              });
+              setHoveredFav(favObj);
+            }
+          } else {
+            setHoveredFav(null);
+          }
         }
-      }, 80);
+      }, 100);
 
       return () => clearTimeout(timer);
+    } else {
+      setHoveredFav(null);
     }
-  }, [activeMatchIndex, matchedFavItems]);
+  }, [activeMatchIndex, matchedFavItems, favorites]);
 
   // Auto-expand connection folder and locales folder on active connection change
   useEffect(() => {
@@ -1005,7 +1071,9 @@ export default function Sidebar() {
             <Star className={`w-3.5 h-3.5 flex-shrink-0 ${
               isTabActive ? 'text-yellow-400 fill-yellow-400' : 'text-gray-500/60 dark:text-gray-400/60'
             }`} />
-            <span className="text-xs truncate">{fav.name}</span>
+            <span className="text-xs truncate">
+              <HighlightMatch text={fav.name} query={favSearchQuery} />
+            </span>
           </div>
 
           {/* Botones rápidos en hover */}
@@ -1125,7 +1193,7 @@ export default function Sidebar() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+      <div className={`flex-1 min-h-0 p-4 ${tab === 'favorites' ? 'flex flex-col overflow-hidden' : 'overflow-y-auto custom-scrollbar'}`}>
 
         {/* ── CONNECTIONS ── */}
         {tab === 'connections' && (
@@ -1309,9 +1377,8 @@ export default function Sidebar() {
           </div>
         )}
 
-        {/* ── FAVORITES ── */}
         {tab === 'favorites' && (
-          <div className="space-y-4">
+          <div className="flex-1 flex flex-col min-h-0 space-y-4 overflow-hidden">
             {/* Botones de Sincronización con BD */}
             <div className="grid grid-cols-3 gap-1.5 mb-2">
               <button
@@ -1378,7 +1445,7 @@ export default function Sidebar() {
                   placeholder="Buscar sección o favorito..."
                   value={favSearchQuery}
                   onChange={(e) => setFavSearchQuery(e.target.value)}
-                  className={`w-full py-2 pl-8 pr-20 rounded-xl text-xs border ${
+                  className={`w-full py-2 pl-8 pr-24 rounded-xl text-xs border ${
                     isDark
                       ? 'bg-gray-950/40 border-gray-800 focus:border-blue-500 text-gray-200'
                       : 'bg-white border-gray-200 focus:border-blue-500 text-gray-800'
@@ -1386,32 +1453,51 @@ export default function Sidebar() {
                 />
                 <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 opacity-40" />
                 
-                {/* Controles de Navegación de Búsqueda */}
-                {matchedFavItems.length > 0 && (
-                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                    <span className="text-[9px] opacity-60 font-semibold mr-1">
-                      {activeMatchIndex + 1}/{matchedFavItems.length}
-                    </span>
+                {/* Controles de Búsqueda (Limpiar y Navegación) */}
+                {favSearchQuery && (
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                    {/* Botón Limpiar */}
                     <button
                       type="button"
                       onClick={() => {
-                        setActiveMatchIndex(prev => (prev - 1 + matchedFavItems.length) % matchedFavItems.length);
+                        setFavSearchQuery('');
+                        setHoveredFav(null);
                       }}
-                      className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-gray-400 hover:text-gray-200 cursor-pointer"
-                      title="Coincidencia anterior"
+                      className="p-1 rounded-full hover:bg-black/10 dark:hover:bg-white/10 text-gray-400 hover:text-gray-205 cursor-pointer transition-colors"
+                      title="Limpiar búsqueda"
                     >
-                      <ChevronUp className="w-3 h-3" />
+                      <X className="w-3.5 h-3.5" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveMatchIndex(prev => (prev + 1) % matchedFavItems.length);
-                      }}
-                      className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-gray-400 hover:text-gray-200 cursor-pointer"
-                      title="Siguiente coincidencia"
-                    >
-                      <ChevronDown className="w-3 h-3" />
-                    </button>
+                    
+                    {/* Navegación por coincidencias */}
+                    {matchedFavItems.length > 0 && (
+                      <>
+                        <span className="w-px h-3 bg-gray-500/20" />
+                        <span className="text-[9px] opacity-60 font-semibold mr-0.5">
+                          {activeMatchIndex + 1}/{matchedFavItems.length}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveMatchIndex(prev => (prev - 1 + matchedFavItems.length) % matchedFavItems.length);
+                          }}
+                          className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-gray-400 hover:text-gray-205 cursor-pointer"
+                          title="Coincidencia anterior"
+                        >
+                          <ChevronUp className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveMatchIndex(prev => (prev + 1) % matchedFavItems.length);
+                          }}
+                          className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-gray-400 hover:text-gray-205 cursor-pointer"
+                          title="Siguiente coincidencia"
+                        >
+                          <ChevronDown className="w-3 h-3" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -1469,7 +1555,7 @@ export default function Sidebar() {
             </div>
 
             {/* Árbol Jerárquico de Favoritos */}
-            <div className="space-y-1 font-sans">
+            <div className="flex-1 overflow-y-auto space-y-1 font-sans custom-scrollbar pr-1">
               {/* 1. SECCIÓN LOCALES */}
               {(() => {
                 const localFavs = visibleFavorites.filter(f => !f.connectionId);
@@ -2299,7 +2385,7 @@ export default function Sidebar() {
             <div>
               <div className="text-[10px] opacity-40 uppercase font-semibold mb-1">Consulta SQL Guardada</div>
               <div className="font-mono bg-black/15 dark:bg-black/45 p-3 rounded-xl max-h-64 overflow-y-auto text-[11px] leading-relaxed whitespace-pre-wrap break-all opacity-95 border border-inherit">
-                {hoveredFav.sql}
+                <HighlightMatch text={hoveredFav.sql} query={favSearchQuery} />
               </div>
             </div>
             
