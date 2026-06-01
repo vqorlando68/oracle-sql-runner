@@ -183,6 +183,10 @@ export default function Home() {
   const [showNavigator, setShowNavigator] = useState(true);
   const [expandedNavigatorNodes, setExpandedNavigatorNodes] = useState<Record<string, boolean>>({});
   const [plsqlOutline, setPlsqlOutline] = useState<OutlineNode[]>([]);
+  
+  // States for DBMS Output context menu
+  const [dbmsContextMenu, setDbmsContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const dbmsContainerRef = useRef<HTMLDivElement>(null);
 
   // Metadata Right Panel States
   const [showMetadataPanel, setShowMetadataPanel] = useState(true);
@@ -262,6 +266,7 @@ export default function Home() {
   useEffect(() => {
     const handleWindowClick = () => {
       setTabContextMenu(null);
+      setDbmsContextMenu(null);
     };
     window.addEventListener('click', handleWindowClick);
     return () => {
@@ -338,6 +343,43 @@ export default function Home() {
       y: e.clientY,
       tab
     });
+  };
+
+  const handleDbmsContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDbmsContextMenu({
+      x: e.clientX,
+      y: e.clientY
+    });
+  };
+
+  const handleSelectAllDbmsOutput = () => {
+    if (dbmsContainerRef.current) {
+      const range = document.createRange();
+      range.selectNodeContents(dbmsContainerRef.current);
+      const selection = window.getSelection();
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+    setDbmsContextMenu(null);
+  };
+
+  const handleCopyDbmsOutput = () => {
+    if (result?.dbmsOutput) {
+      const text = result.dbmsOutput.join('\n');
+      navigator.clipboard.writeText(text);
+      useAppStore.getState().showToast('Salida copiada al portapapeles', 'success');
+    }
+    setDbmsContextMenu(null);
+  };
+
+  const handleClearDbmsOutput = () => {
+    if (result) {
+      setResult({ ...result, dbmsOutput: [] });
+    }
+    setDbmsContextMenu(null);
   };
 
   const editorRef = useRef<any>(null);
@@ -2807,7 +2849,11 @@ export default function Home() {
                     <Trash2 className="w-3.5 h-3.5" /> Clear Output
                   </button>
                 </div>
-                <div className="flex-1 p-4 overflow-auto custom-scrollbar font-mono text-sm">
+                <div 
+                  ref={dbmsContainerRef}
+                  onContextMenu={handleDbmsContextMenu}
+                  className="flex-1 p-4 overflow-auto custom-scrollbar font-mono text-sm select-text"
+                >
                   {result?.dbmsOutput && result.dbmsOutput.length > 0 ? (
                     result.dbmsOutput.map((line, idx) => (
                       <div key={idx} className="whitespace-pre-wrap">{line}</div>
@@ -3152,6 +3198,50 @@ export default function Home() {
           >
             <Trash2 className="w-3.5 h-3.5" />
             Cerrar Todos los Tabs
+          </button>
+        </div>
+      )}
+
+      {/* Menu contextual para DBMS Output */}
+      {dbmsContextMenu && (
+        <div 
+          className="fixed z-[700] rounded-xl shadow-2xl border p-1 w-48 animate-fade-in backdrop-blur-md font-sans"
+          style={{ 
+            top: dbmsContextMenu.y, 
+            left: dbmsContextMenu.x,
+            backgroundColor: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+            borderColor: isDark ? 'rgba(31, 41, 55, 0.8)' : 'rgba(229, 231, 235, 0.8)'
+          }}
+        >
+          <button
+            onClick={handleSelectAllDbmsOutput}
+            className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-colors text-left cursor-pointer ${
+              isDark ? 'hover:bg-gray-800 text-gray-200' : 'hover:bg-gray-100 text-gray-700'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Seleccionar todo
+          </button>
+          <button
+            onClick={handleCopyDbmsOutput}
+            disabled={!result?.dbmsOutput || result.dbmsOutput.length === 0}
+            className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-colors text-left cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+              isDark ? 'hover:bg-gray-800 text-gray-200' : 'hover:bg-gray-100 text-gray-700'
+            }`}
+          >
+            <Copy className="w-3.5 h-3.5" />
+            Copiar
+          </button>
+          <div className={`my-1 border-t ${isDark ? 'border-gray-800' : 'border-gray-200'}`} />
+          <button
+            onClick={handleClearDbmsOutput}
+            disabled={!result?.dbmsOutput || result.dbmsOutput.length === 0}
+            className={`w-full flex items-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-colors text-left cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+              isDark ? 'hover:bg-red-500/10 text-red-400' : 'hover:bg-red-50 text-red-600'
+            }`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Limpiar
           </button>
         </div>
       )}
