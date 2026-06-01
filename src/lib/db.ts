@@ -127,9 +127,15 @@ export async function executeOracleQuery(
       await connection.execute(`BEGIN DBMS_OUTPUT.ENABLE(NULL); END;`);
     }
 
-    const isSelect = isSelectQuery(sql);
-    const hasRowIdInSql = /\browid\b/i.test(sql);
-    const isPaginated = isSelect && offset !== undefined && limit !== undefined && !hasRowIdInSql;
+    const cleanSql = sql
+      .replace(/--.*$/gm, '') // single-line comments
+      .replace(/\/\*[\s\S]*?\*\//g, '') // multi-line comments
+      .trim();
+
+    const isSelect = /^(SELECT|WITH)\b/i.test(cleanSql);
+    const hasRowIdInSql = /\browid\b/i.test(cleanSql);
+    const hasPaginationInSql = /\b(offset|limit|fetch\s+(first|next))\b/i.test(cleanSql);
+    const isPaginated = isSelect && offset !== undefined && limit !== undefined && !hasRowIdInSql && !hasPaginationInSql;
 
     let sqlToExecute = sql;
 
