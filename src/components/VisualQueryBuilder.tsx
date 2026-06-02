@@ -7,7 +7,7 @@ import {
   Sliders, Filter, ArrowDownUp, Combine, Undo, Redo, Code, Image,
   FileText, CloudDownload, CloudUpload, Maximize2, Minimize2,
   ChevronDown, ChevronRight, Edit3, ArrowLeftRight, Trash, Grid,
-  MessageSquare, Copy, XCircle, AlertCircle
+  MessageSquare, Copy, XCircle, AlertCircle, Eye
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import Editor from '@monaco-editor/react';
@@ -16,6 +16,8 @@ import {
   QueryBuilderDesign, TableDesign, JoinDesign, ColumnDesign, WhereGroup, WhereRule, OrderByItem,
   createInitialDesign, compileDesignToSql, parseSqlToState 
 } from '@/lib/sql-designer-parser';
+import ResultsTable from './ResultsTable';
+import FavoriteNameModal from './FavoriteNameModal';
 
 interface VisualQueryBuilderProps {
   isOpen: boolean;
@@ -42,7 +44,16 @@ export default function VisualQueryBuilder({
   activeConnection,
   showToast
 }: VisualQueryBuilderProps) {
-  const { connections } = useAppStore();
+  const { 
+    connections, 
+    favorites, 
+    favoriteSections, 
+    activeConnectionId, 
+    addFavoriteFromSql, 
+    addFavoriteSection, 
+    saveFavoritesToDb,
+    updateFavoriteSql
+  } = useAppStore();
   
   // Design State
   const [design, setDesign] = useState<QueryBuilderDesign>(createInitialDesign());
@@ -83,6 +94,15 @@ export default function VisualQueryBuilder({
   const canvasRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<any>(null);
+  const previewAbortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (previewAbortControllerRef.current) {
+        previewAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // Additional States
   const [copied, setCopied] = useState(false);
@@ -125,6 +145,18 @@ export default function VisualQueryBuilder({
   // Background Metadata and Relations states
   const [dbRelations, setDbRelations] = useState<any[]>([]);
   const [lastFetchedTables, setLastFetchedTables] = useState<string[]>([]);
+
+  // Preview States
+  const [showPreviewResults, setShowPreviewResults] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[] } | null>(null);
+  const [previewHasMore, setPreviewHasMore] = useState(false);
+  const [previewLoadingMore, setPreviewLoadingMore] = useState(false);
+
+  // Favorite Save Modal States
+  const [favModalOpen, setFavModalOpen] = useState(false);
+  const [postSaveAction, setPostSaveAction] = useState<'none' | 'clear'>('none');
 
   // Sync inputs when modals are opened
   useEffect(() => {
@@ -1450,16 +1482,66 @@ export default function VisualQueryBuilder({
   // Save as Favorite (Append design details to favorites)
   // ----------------------------------------------------
   const handleSaveToFavorites = () => {
-    // Add design to local favorites via store
-    const name = prompt('Ingresa un nombre para guardar este diseño de consulta:');
-    if (!name) return;
+    setPostSaveAction('none');
+    setFavModalOpen(true);
+  };
 
-    // Use default 'Varios' section or find sections
-    const sectionId = 'section-varios'; 
+  const handleFavModalConfirm = async (
+    name: string,
+    sectionId: string,
+    connectionId: string | undefined,
+    saveToDb: boolean,
+    overwrite: boolean
+  ) => {
+    const targetConn = connectionId ? connections.find(c => c.id === connectionId) : undefined;
     const sqlWithComment = compileDesignToSql(design, true);
-    useAppStore.getState().addFavoriteFromSql(sqlWithComment, name, sectionId);
-    showToast(`Consulta visual "${name}" guardada en Favoritos locales.`, 'success');
+
+    if (overwrite) {
+      // Find the existing favorite with same name and same connectionId (or local)
+      const existingFav = favorites.find(f =>
+        f.name.toLowerCase() === name.toLowerCase() &&
+        (connectionId ? f.connectionId === connectionId : !f.connectionId)
+      );
+      if (existingFav) {
+        updateFavoriteSql(existingFav.id, sqlWithComment);
+        if (saveToDb && targetConn) {
+          try {
+            await saveFavoritesToDb(targetConn, [existingFav.id]);
+            showToast(`"${name}" sobrescrito local y en la BD`, 'success');
+          } catch (err: any) {
+            showToast(`"${name}" sobrescrito localmente (error en la BD: ${err.message})`, 'info');
+          }
+        } else {
+          showToast(`"${name}" sobrescrito en favoritos`, 'success');
+        }
+      }
+    } else {
+      addFavoriteFromSql(sqlWithComment, name, sectionId, connectionId);
+      if (saveToDb && targetConn) {
+        // Wait a tick for the store to update
+        await new Promise<void>(resolve => setTimeout(resolve, 50));
+        const newFav = useAppStore.getState().favorites.find(
+          f => f.name === name && f.sectionId === sectionId && f.connectionId === connectionId
+        );
+        if (newFav) {
+          try {
+            await saveFavoritesToDb(targetConn, [newFav.id]);
+            showToast(`"${name}" guardado local y en la BD`, 'success');
+          } catch (err: any) {
+            showToast(`"${name}" guardado localmente (error en la BD: ${err.message})`, 'info');
+          }
+        }
+      } else {
+        showToast(`Consulta visual "${name}" guardada en Favoritos locales.`, 'success');
+      }
+    }
+
     setIsDirty(false);
+    setFavModalOpen(false);
+
+    if (postSaveAction === 'clear') {
+      handleClearCanvas();
+    }
   };
 
   // ----------------------------------------------------
@@ -1504,6 +1586,129 @@ export default function VisualQueryBuilder({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleCancelPreview = () => {
+    if (previewAbortControllerRef.current) {
+      previewAbortControllerRef.current.abort();
+      previewAbortControllerRef.current = null;
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleExecutePreview = async () => {
+    if (!activeConnection || !generatedSql.trim()) {
+      showToast('No hay una consulta generada para previsualizar', 'error');
+      return;
+    }
+
+    if (previewAbortControllerRef.current) {
+      previewAbortControllerRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    previewAbortControllerRef.current = controller;
+
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewHasMore(false);
+    try {
+      const limit = 100;
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: generatedSql,
+          autoCommit: false,
+          offset: 0,
+          limit: limit + 1
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Error al ejecutar la consulta');
+      }
+
+      const rawRows = data.rows || [];
+      const hasMore = rawRows.length > limit;
+      const rows = hasMore ? rawRows.slice(0, limit) : rawRows;
+
+      setPreviewData({
+        columns: data.columns || [],
+        rows: rows
+      });
+      setPreviewHasMore(hasMore);
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        showToast('Ejecución de vista previa cancelada.', 'info');
+      } else {
+        setPreviewError(err.message || 'Error desconocido al ejecutar la consulta');
+        setPreviewData(null);
+      }
+    } finally {
+      if (previewAbortControllerRef.current === controller) {
+        previewAbortControllerRef.current = null;
+        setPreviewLoading(false);
+      }
+    }
+  };
+
+  const handleLoadMorePreview = async () => {
+    if (!activeConnection || !previewData || previewLoadingMore) return;
+
+    setPreviewLoadingMore(true);
+    try {
+      const limit = 100;
+      const currentOffset = previewData.rows.length;
+
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: generatedSql,
+          autoCommit: false,
+          offset: currentOffset,
+          limit: limit + 1
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Error al cargar más registros');
+      }
+
+      const rawRows = data.rows || [];
+      const hasMore = rawRows.length > limit;
+      const newRows = hasMore ? rawRows.slice(0, limit) : rawRows;
+
+      setPreviewData(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          rows: [...prev.rows, ...newRows]
+        };
+      });
+      setPreviewHasMore(hasMore);
+    } catch (err: any) {
+      showToast(err.message || 'Error al cargar más registros', 'error');
+    } finally {
+      setPreviewLoadingMore(false);
+    }
+  };
+
+  const handleTogglePreview = () => {
+    if (showPreviewResults) {
+      setShowPreviewResults(false);
+    } else {
+      setShowPreviewResults(true);
+      setTimeout(() => {
+        handleExecutePreview();
+      }, 50);
+    }
+  };
+
   const handleNewQueryClick = () => {
     if (isDirty && design.tables.length > 0) {
       setShowNewQueryConfirm(true);
@@ -1524,17 +1729,8 @@ export default function VisualQueryBuilder({
   };
 
   const handleSaveAndClear = () => {
-    // Save current design first
-    const name = prompt('Ingresa un nombre para guardar este diseño de consulta:');
-    if (!name) return; // user cancelled, keep design
-
-    const sectionId = 'section-varios'; 
-    const sqlWithComment = compileDesignToSql(design, true);
-    useAppStore.getState().addFavoriteFromSql(sqlWithComment, name, sectionId);
-    showToast(`Consulta visual "${name}" guardada en Favoritos locales.`, 'success');
-    
-    // Then clear canvas
-    handleClearCanvas();
+    setPostSaveAction('clear');
+    setFavModalOpen(true);
   };
 
   if (!isOpen) return null;
@@ -1752,7 +1948,9 @@ export default function VisualQueryBuilder({
             </div>
           )}
           {/* Zoom Indicator Toolbar inside canvas */}
-          <div className="absolute top-4 left-4 z-50 flex items-center gap-1.5 p-1 rounded-xl shadow-lg border backdrop-blur-md bg-opacity-80 dark:bg-opacity-85"
+          <div 
+            onMouseDown={(e) => e.stopPropagation()}
+            className="absolute top-4 left-4 z-50 flex items-center gap-1.5 p-1 rounded-xl shadow-lg border backdrop-blur-md bg-opacity-80 dark:bg-opacity-85"
             style={{
               backgroundColor: isDark ? '#111827' : '#ffffff',
               borderColor: isDark ? '#1f2937' : '#e5e7eb'
@@ -1915,6 +2113,7 @@ export default function VisualQueryBuilder({
             {design.tables.map(tbl => (
               <div
                 key={tbl.id}
+                onMouseDown={(e) => e.stopPropagation()}
                 style={{ 
                   left: tbl.x, 
                   top: tbl.y, 
@@ -2097,6 +2296,7 @@ export default function VisualQueryBuilder({
 
             return (
               <div 
+                onMouseDown={(e) => e.stopPropagation()}
                 style={{ left: x - 90, top: y - 80 }}
                 className={`absolute z-[120] p-3 rounded-2xl shadow-2xl border w-48 flex flex-col gap-2 backdrop-blur-md ${
                   isDark ? 'bg-slate-900/95 border-slate-800 text-slate-100' : 'bg-white/95 border-slate-200 text-slate-900'
@@ -2169,16 +2369,34 @@ export default function VisualQueryBuilder({
           <div className={`px-3 py-1.5 border-b flex items-center justify-between text-[10px] uppercase font-bold tracking-wider ${
             isDark ? 'bg-gray-950/40 border-gray-850' : 'bg-gray-50 border-gray-250'
           }`}>
-            <span className="flex items-center gap-1 text-blue-500"><Code className="w-3.5 h-3.5" /> Consulta SQL Generada</span>
+            <span className="flex items-center gap-1 text-blue-500">
+              {showPreviewResults ? (
+                <><Database className="w-3.5 h-3.5" /> Resultados de Vista Previa</>
+              ) : (
+                <><Code className="w-3.5 h-3.5" /> Consulta SQL Generada</>
+              )}
+            </span>
             
             <div className="flex items-center gap-1.5">
-              <button 
-                onClick={handleFormatSql} 
-                className="px-2 py-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-[9px] font-semibold flex items-center gap-1 cursor-pointer transition-colors border dark:border-gray-800"
-                title="Alinear e indexar sintaxis SQL"
-              >
-                <RefreshCw className="w-3 h-3" /> Formatear
-              </button>
+              {showPreviewResults && (
+                <button 
+                  onClick={handleExecutePreview} 
+                  disabled={previewLoading}
+                  className="px-2 py-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-[9px] font-semibold flex items-center gap-1 cursor-pointer transition-colors border dark:border-gray-800 disabled:opacity-40"
+                  title="Refrescar vista previa"
+                >
+                  <RefreshCw className={`w-3 h-3 ${previewLoading ? 'animate-spin' : ''}`} /> Refrescar
+                </button>
+              )}
+              {!showPreviewResults && (
+                <button 
+                  onClick={handleFormatSql} 
+                  className="px-2 py-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-[9px] font-semibold flex items-center gap-1 cursor-pointer transition-colors border dark:border-gray-800"
+                  title="Alinear e indexar sintaxis SQL"
+                >
+                  <RefreshCw className="w-3 h-3" /> Formatear
+                </button>
+              )}
               <button 
                 onClick={handleCopySql} 
                 className="px-2 py-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-[9px] font-semibold flex items-center gap-1 cursor-pointer transition-colors border dark:border-gray-800 text-blue-500 hover:text-blue-600"
@@ -2187,26 +2405,84 @@ export default function VisualQueryBuilder({
                 {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
                 Copiar
               </button>
+              <button 
+                onClick={handleTogglePreview} 
+                className={`px-2 py-0.5 rounded text-[9px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors border ${
+                  showPreviewResults
+                    ? 'bg-blue-600 text-white border-blue-500 hover:bg-blue-700'
+                    : 'hover:bg-black/10 dark:hover:bg-white/10 dark:border-gray-800 text-amber-500 dark:text-amber-400'
+                }`}
+                title="Vista previa del resultado"
+              >
+                {showPreviewResults ? <Code className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                {showPreviewResults ? 'Ver SQL' : 'Vista Previa'}
+              </button>
             </div>
           </div>
           
           <div className="flex-1 min-h-0 relative">
-            <Editor
-              height="100%"
-              language="sql"
-              theme={isDark ? 'vs-dark' : 'light'}
-              value={generatedSql}
-              onChange={handleMonacoEditorChange}
-              onMount={(editor) => { editorRef.current = editor; }}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 11.5,
-                lineNumbers: 'on',
-                renderLineHighlight: 'all',
-                scrollBeyondLastLine: false,
-                wordWrap: 'on'
-              }}
-            />
+            {showPreviewResults ? (
+              <div className="absolute inset-0 overflow-auto custom-scrollbar p-3">
+                {previewLoading ? (
+                  <div className="h-full flex items-center justify-center flex-col gap-3 opacity-80">
+                    <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                    <span className="text-xs font-semibold">Ejecutando consulta de vista previa...</span>
+                    <button
+                      onClick={handleCancelPreview}
+                      className="px-3 py-1 text-xs font-bold rounded-lg border border-red-500/30 hover:bg-red-500/10 text-red-500 cursor-pointer transition-all"
+                    >
+                      Cancelar Selección
+                    </button>
+                  </div>
+                ) : previewError ? (
+                  <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/5 text-red-500 text-xs flex gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-bold mb-1">Error de Ejecución</h4>
+                      <pre className="font-mono whitespace-pre-wrap break-all text-[11px] leading-relaxed">{previewError}</pre>
+                    </div>
+                  </div>
+                ) : previewData ? (
+                  previewData.rows.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-xs opacity-50 italic">
+                      La consulta no retornó ningún registro.
+                    </div>
+                  ) : (
+                    <div className="h-full flex flex-col min-h-0">
+                      <ResultsTable
+                        data={previewData.rows}
+                        columns={previewData.columns}
+                        sql={generatedSql}
+                        hasMore={previewHasMore}
+                        isLoadingMore={previewLoadingMore}
+                        onLoadMore={handleLoadMorePreview}
+                      />
+                    </div>
+                  )
+                ) : (
+                  <div className="h-full flex items-center justify-center text-xs opacity-50 italic">
+                    Sin datos previsualizados.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Editor
+                height="100%"
+                language="sql"
+                theme={isDark ? 'vs-dark' : 'light'}
+                value={generatedSql}
+                onChange={handleMonacoEditorChange}
+                onMount={(editor) => { editorRef.current = editor; }}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 11.5,
+                  lineNumbers: 'on',
+                  renderLineHighlight: 'all',
+                  scrollBeyondLastLine: false,
+                  wordWrap: 'on'
+                }}
+              />
+            )}
           </div>
 
           {/* Sync status warnings */}
@@ -2765,99 +3041,118 @@ export default function VisualQueryBuilder({
                           <div key={cIdx} className="flex items-center gap-2 flex-wrap sm:flex-nowrap border-b border-gray-700/5 py-1 px-1 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-all">
                             {/* Column selector */}
                             <select
-                              value={child.table && child.column ? `${child.table}.${child.column}` : ''}
+                              value={child.table && child.column ? `${child.table}.${child.column}` : child.operator === 'RAW' ? '__RAW__' : ''}
                               onChange={(e) => {
-                                const [t, c] = e.target.value.split('.');
-                                updateFilterRule(child, { table: t, column: c });
+                                if (e.target.value === '__RAW__') {
+                                  updateFilterRule(child, { table: undefined, column: undefined, operator: 'RAW', value: 'rownum < 10' });
+                                } else {
+                                  const [t, c] = e.target.value.split('.');
+                                  updateFilterRule(child, { table: t, column: c, operator: '=' });
+                                }
                               }}
                               className={`p-1 text-xs rounded border outline-none font-mono ${
                                 isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-350 text-slate-800'
                               }`}
                             >
                               <option value="">-- Campo --</option>
+                              <option value="__RAW__">-- Expresión Libre (RAW) --</option>
                               {cols.map(c => (
                                 <option key={c.label} value={c.label}>{c.label}</option>
                               ))}
                             </select>
 
                             {/* Operator select */}
-                            <select
-                              value={child.operator}
-                              onChange={(e) => updateFilterRule(child, { operator: e.target.value })}
-                              className={`p-1 text-xs rounded border outline-none ${
-                                isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-350 text-slate-800'
-                              }`}
-                            >
-                              <option value="=">=</option>
-                              <option value="<>">&lt;&gt; (Diferente)</option>
-                              <option value=">">&gt; Mayor</option>
-                              <option value="<">&lt; Menor</option>
-                              <option value=">=">&gt;= Mayor o igual</option>
-                              <option value="<=">&lt;= Menor o igual</option>
-                              <option value="LIKE">LIKE (Patrón)</option>
-                              <option value="NOT LIKE">NOT LIKE</option>
-                              <option value="IN">IN (Lista)</option>
-                              <option value="NOT IN">NOT IN</option>
-                              <option value="BETWEEN">BETWEEN</option>
-                              <option value="IS NULL">IS NULL</option>
-                              <option value="IS NOT NULL">IS NOT NULL</option>
-                            </select>
+                            {child.operator !== 'RAW' && (
+                              <select
+                                value={child.operator}
+                                onChange={(e) => updateFilterRule(child, { operator: e.target.value })}
+                                className={`p-1 text-xs rounded border outline-none ${
+                                  isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-350 text-slate-800'
+                                }`}
+                              >
+                                <option value="=">=</option>
+                                <option value="<>">&lt;&gt; (Diferente)</option>
+                                <option value=">">&gt; Mayor</option>
+                                <option value="<">&lt; Menor</option>
+                                <option value=">=">&gt;= Mayor o igual</option>
+                                <option value="<=">&lt;= Menor o igual</option>
+                                <option value="LIKE">LIKE (Patrón)</option>
+                                <option value="NOT LIKE">NOT LIKE</option>
+                                <option value="IN">IN (Lista)</option>
+                                <option value="NOT IN">NOT IN</option>
+                                <option value="BETWEEN">BETWEEN</option>
+                                <option value="IS NULL">IS NULL</option>
+                                <option value="IS NOT NULL">IS NOT NULL</option>
+                              </select>
+                            )}
 
                             {/* Value input controls */}
-                            {child.operator !== 'IS NULL' && child.operator !== 'IS NOT NULL' && (
-                              <>
-                                {/* Value input Type select */}
-                                <select
-                                  value={child.valueType}
-                                  onChange={(e) => updateFilterRule(child, { valueType: e.target.value as any, value: '' })}
-                                  className={`p-1 text-[11px] font-bold rounded border outline-none ${
-                                    isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-350 text-slate-800'
-                                  }`}
-                                >
-                                  <option value="text">Texto</option>
-                                  <option value="number">Número</option>
-                                  <option value="date">Fecha</option>
-                                  <option value="parameter">Parámetro Oracle (:P_)</option>
-                                </select>
-
-                                {/* Direct inputs */}
-                                {child.valueType === 'date' ? (
-                                  <input
-                                    type="date"
-                                    value={child.value}
-                                    onChange={(e) => updateFilterRule(child, { value: e.target.value })}
-                                    className={`p-1 text-xs rounded border outline-none ${
-                                      isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-350'
-                                    }`}
-                                  />
-                                ) : (
-                                  <input
-                                    type={child.valueType === 'number' ? 'number' : 'text'}
-                                    value={child.value}
-                                    placeholder={child.valueType === 'parameter' ? ':P_ID' : 'Valor'}
-                                    onChange={(e) => updateFilterRule(child, { value: e.target.value })}
-                                    className={`p-1 text-xs rounded border outline-none flex-1 max-w-[200px] ${
+                            {child.operator === 'RAW' ? (
+                              <input
+                                type="text"
+                                value={child.value}
+                                placeholder="Ej: rownum < 10"
+                                onChange={(e) => updateFilterRule(child, { value: e.target.value })}
+                                className={`p-1 text-xs rounded border outline-none flex-1 min-w-[200px] ${
+                                  isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-350 text-slate-800'
+                                }`}
+                              />
+                            ) : (
+                              child.operator !== 'IS NULL' && child.operator !== 'IS NOT NULL' && (
+                                <>
+                                  {/* Value input Type select */}
+                                  <select
+                                    value={child.valueType}
+                                    onChange={(e) => updateFilterRule(child, { valueType: e.target.value as any, value: '' })}
+                                    className={`p-1 text-[11px] font-bold rounded border outline-none ${
                                       isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-350 text-slate-800'
                                     }`}
-                                  />
-                                )}
+                                  >
+                                    <option value="text">Texto</option>
+                                    <option value="number">Número</option>
+                                    <option value="date">Fecha</option>
+                                    <option value="parameter">Parámetro Oracle (:P_)</option>
+                                  </select>
 
-                                {/* BETWEEN secondary input */}
-                                {(child.operator === 'BETWEEN' || child.operator === 'NOT BETWEEN') && (
-                                  <>
-                                    <span className="text-[10px] font-bold opacity-60">y</span>
+                                  {/* Direct inputs */}
+                                  {child.valueType === 'date' ? (
+                                    <input
+                                      type="date"
+                                      value={child.value}
+                                      onChange={(e) => updateFilterRule(child, { value: e.target.value })}
+                                      className={`p-1 text-xs rounded border outline-none ${
+                                        isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-350'
+                                      }`}
+                                    />
+                                  ) : (
                                     <input
                                       type={child.valueType === 'number' ? 'number' : 'text'}
-                                      value={child.value2 || ''}
-                                      placeholder="Hasta"
-                                      onChange={(e) => updateFilterRule(child, { value2: e.target.value })}
+                                      value={child.value}
+                                      placeholder={child.valueType === 'parameter' ? ':P_ID' : 'Valor'}
+                                      onChange={(e) => updateFilterRule(child, { value: e.target.value })}
                                       className={`p-1 text-xs rounded border outline-none flex-1 max-w-[200px] ${
                                         isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-350 text-slate-800'
                                       }`}
                                     />
-                                  </>
-                                )}
-                              </>
+                                  )}
+
+                                  {/* BETWEEN secondary input */}
+                                  {(child.operator === 'BETWEEN' || child.operator === 'NOT BETWEEN') && (
+                                    <>
+                                      <span className="text-[10px] font-bold opacity-60">y</span>
+                                      <input
+                                        type={child.valueType === 'number' ? 'number' : 'text'}
+                                        value={child.value2 || ''}
+                                        placeholder="Hasta"
+                                        onChange={(e) => updateFilterRule(child, { value2: e.target.value })}
+                                        className={`p-1 text-xs rounded border outline-none flex-1 max-w-[200px] ${
+                                          isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-white border-slate-350 text-slate-850'
+                                        }`}
+                                      />
+                                    </>
+                                  )}
+                                </>
+                              )
                             )}
 
                             {/* Delete button */}
@@ -3363,6 +3658,20 @@ export default function VisualQueryBuilder({
             </div>
           </div>
         </div>
+      )}
+
+      {/* 8. Favorite Name Modal Overlay */}
+      {favModalOpen && (
+        <FavoriteNameModal
+          isDark={isDark}
+          favorites={favorites}
+          sections={favoriteSections}
+          connections={connections}
+          defaultConnectionId={activeConnectionId || undefined}
+          onConfirm={handleFavModalConfirm}
+          onCancel={() => setFavModalOpen(false)}
+          onAddSection={addFavoriteSection}
+        />
       )}
     </div>
   );
