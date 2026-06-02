@@ -13,7 +13,7 @@ import {
   VisibilityState
 } from '@tanstack/react-table';
 import { useAppStore } from '@/store/useAppStore';
-import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download, Copy, FileText, FileJson, Columns, Maximize2, X, Settings, Monitor } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download, Copy, FileText, FileJson, Columns, Maximize2, X, Settings, Monitor, MoreHorizontal, Edit } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import ExportConfigModal from './ExportConfigModal';
@@ -86,6 +86,29 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [gridModalOpen, setGridModalOpen] = useState(false);
   
+  // Modal state for viewing/editing full record details
+  const [recordModal, setRecordModal] = useState<{
+    isOpen: boolean;
+    rowIndex: number;
+    rowData: any;
+  } | null>(null);
+  const [formFields, setFormFields] = useState<Record<string, string>>({});
+  const [isUpdatingRecord, setIsUpdatingRecord] = useState(false);
+
+  // Sync formFields when recordModal opens
+  useEffect(() => {
+    if (recordModal?.isOpen && recordModal.rowData) {
+      const initialFields: Record<string, string> = {};
+      columns.forEach(col => {
+        const val = recordModal.rowData[col];
+        initialFields[col] = val === null || val === undefined ? '' : String(val);
+      });
+      setFormFields(initialFields);
+    } else {
+      setFormFields({});
+    }
+  }, [recordModal, columns]);
+
   // Modal state for viewing/editing cell details
   const [cellModal, setCellModal] = useState<{ 
     isOpen: boolean; 
@@ -93,6 +116,7 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
     colName: string;
     rowIndex?: number;
     isEditable?: boolean;
+    onSave?: (newValue: string) => void;
   }>({ isOpen: false, content: '', colName: '' });
 
   const [modalTextValue, setModalTextValue] = useState<string>('');
@@ -174,9 +198,109 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
     }
   }, [gridData, sql, connections, activeConnectionId, showToast]);
 
+  const handleSaveRecord = async (rowIndex: number, updatedFields: Record<string, string>) => {
+    const originalRow = gridData[rowIndex];
+    const rowIdVal = getRowIdValue(originalRow);
+    if (!rowIdVal) {
+      showToast('No se encontró el ROWID para este registro', 'error');
+      return;
+    }
+
+    const changes: Record<string, string | null> = {};
+    let hasChanges = false;
+    for (const key of Object.keys(updatedFields)) {
+      if (key.toUpperCase() === 'ROWID') continue;
+      const originalValue = String(originalRow[key] ?? '');
+      const newValue = updatedFields[key];
+      if (originalValue !== newValue) {
+        changes[key] = newValue === '' ? null : newValue;
+        hasChanges = true;
+      }
+    }
+
+    if (!hasChanges) {
+      setRecordModal(null);
+      return;
+    }
+
+    let tableName = getTableNameFromSql(sql || '');
+    if (!tableName) {
+      const input = window.prompt('No se pudo determinar la tabla automáticamente. Por favor, ingresa el nombre de la tabla a actualizar:');
+      if (!input) return;
+      tableName = input.trim();
+    }
+
+    setIsUpdatingRecord(true);
+    try {
+      const activeConnection = connections.find(c => c.id === activeConnectionId);
+      if (!activeConnection) {
+        throw new Error('No hay una conexión activa seleccionada');
+      }
+
+      const setClauses = Object.keys(changes).map(key => `${key} = :${key}`).join(', ');
+      const binds: Record<string, any> = { rid: rowIdVal };
+      for (const key of Object.keys(changes)) {
+        binds[key] = changes[key];
+      }
+
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: `UPDATE ${tableName} SET ${setClauses} WHERE ROWID = :rid`,
+          binds,
+          autoCommit: false
+        })
+      });
+
+      const resData = await res.json();
+      if (!res.ok) {
+        throw new Error(resData.error || 'Error al ejecutar UPDATE en la base de datos');
+      }
+
+      const updated = [...gridData];
+      updated[rowIndex] = { ...updated[rowIndex], ...changes };
+      setGridData(updated);
+
+      showToast(`Registro actualizado en la transacción (tabla ${tableName}). Haz clic en COMMIT para guardar permanentemente.`, 'success');
+      setRecordModal(null);
+    } catch (err: any) {
+      showToast(err.message || 'Error al actualizar el registro', 'error');
+    } finally {
+      setIsUpdatingRecord(false);
+    }
+  };
+
   const tableColumns = useMemo<ColumnDef<any>[]>(() => {
     const hasRowId = columns.some(c => c.toUpperCase() === 'ROWID');
-    return columns.map(col => ({
+    
+    const actionCol: ColumnDef<any> = {
+      id: '_actions',
+      header: '',
+      cell: info => {
+        const rowIndex = info.row.index;
+        const originalRow = info.row.original;
+        return (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setRecordModal({
+                isOpen: true,
+                rowIndex,
+                rowData: originalRow
+              });
+            }}
+            className="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 text-gray-500 hover:text-blue-500 transition-colors cursor-pointer flex items-center justify-center"
+            title="Ver / editar registro completo"
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </button>
+        );
+      }
+    };
+
+    const dataCols: ColumnDef<any>[] = columns.map(col => ({
       accessorKey: col,
       header: col,
       cell: info => {
@@ -308,6 +432,8 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
         );
       }
     }));
+
+    return [actionCol, ...dataCols];
   }, [columns, gridOptions, editingCell, updatingCell, isDark, handleSave, showToast]);
 
   const table = useReactTable({
@@ -494,13 +620,19 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
             {table.getHeaderGroups().map(headerGroup => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map(header => (
-                  <th key={header.id} className="px-4 py-3 font-semibold border-b border-r border-inherit last:border-r-0 cursor-pointer select-none" onClick={header.column.getToggleSortingHandler()}>
-                    <div className="flex items-center gap-2">
+                  <th 
+                    key={header.id} 
+                    className={`px-4 py-3 font-semibold border-b border-r border-inherit last:border-r-0 select-none ${
+                      header.column.id === '_actions' ? 'cursor-default w-10 text-center' : 'cursor-pointer'
+                    }`}
+                    onClick={header.column.id === '_actions' ? undefined : header.column.getToggleSortingHandler()}
+                  >
+                    <div className="flex items-center gap-2 justify-center">
                       {flexRender(header.column.columnDef.header, header.getContext())}
-                      {{
+                      {header.column.id !== '_actions' && ({
                         asc: <ChevronUp className="w-3 h-3 opacity-70" />,
                         desc: <ChevronDown className="w-3 h-3 opacity-70" />,
-                      }[header.column.getIsSorted() as string] ?? null}
+                      }[header.column.getIsSorted() as string] ?? null)}
                     </div>
                   </th>
                 ))}
@@ -511,7 +643,12 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
             {table.getRowModel().rows.map(row => (
               <tr key={row.id} className={`border-b border-inherit ${isDark ? 'hover:bg-gray-800/50' : 'hover:bg-gray-50'}`}>
                 {row.getVisibleCells().map(cell => (
-                  <td key={cell.id} className={`px-4 py-2 border-r border-inherit last:border-r-0 max-w-[300px]`}>
+                  <td 
+                    key={cell.id} 
+                    className={`px-4 py-2 border-r border-inherit last:border-r-0 max-w-[300px] ${
+                      cell.column.id === '_actions' ? 'w-10 text-center' : ''
+                    }`}
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
@@ -566,6 +703,148 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
         </select>
       </div>
 
+      {/* Record Details Form Modal */}
+      {recordModal?.isOpen && recordModal.rowData && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className={`w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl shadow-2xl ${
+            isDark ? 'bg-gray-900 border-gray-700 text-gray-250' : 'bg-white border-gray-200 text-gray-850'
+          } border`}>
+            {/* Modal Header */}
+            <div className={`p-4 border-b flex justify-between items-center ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
+              <div>
+                <h3 className="font-bold text-lg flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-blue-500" /> Detalle del Registro
+                </h3>
+                <p className="text-xs opacity-50 mt-0.5">
+                  Tabla: {getTableNameFromSql(sql || '') || 'Desconocida'} | Fila: {recordModal.rowIndex + 1}
+                </p>
+              </div>
+              <button 
+                onClick={() => setRecordModal(null)} 
+                className={`p-1.5 rounded-md hover:bg-black/10 transition-colors ${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body (Form Fields) */}
+            <div className="p-4 flex-1 overflow-auto custom-scrollbar space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {columns.map(col => {
+                  const hasRowId = columns.some(c => c.toUpperCase() === 'ROWID');
+                  const isColEditable = hasRowId && col.toUpperCase() !== 'ROWID';
+                  const val = recordModal.rowData[col];
+                  const valString = val === null || val === undefined ? '' : String(val);
+
+                  return (
+                    <div key={col} className="flex flex-col gap-1.5">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[11px] font-bold opacity-60 uppercase tracking-wider font-mono truncate" title={col}>
+                          {col} {isColEditable && <span className="text-blue-500" title="Editable">*</span>}
+                        </label>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              const currentVal = formFields[col] ?? '';
+                              navigator.clipboard.writeText(currentVal);
+                              showToast('Copiado al portapapeles', 'success');
+                            }}
+                            className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-500/10 rounded transition-all cursor-pointer"
+                            title="Copiar al portapapeles"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setCellModal({
+                              isOpen: true,
+                              content: formFields[col] ?? '',
+                              colName: col,
+                              rowIndex: recordModal.rowIndex,
+                              isEditable: isColEditable,
+                              onSave: isColEditable ? (newValue) => {
+                                setFormFields(prev => ({ ...prev, [col]: newValue }));
+                              } : undefined
+                            })}
+                            className="p-1 bg-blue-500/10 text-blue-500 rounded hover:bg-blue-500/20 transition-all cursor-pointer"
+                            title={isColEditable ? "Ver y editar en pantalla completa" : "Ver en pantalla completa"}
+                          >
+                            <Maximize2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      {isColEditable ? (
+                        valString.length > 60 ? (
+                          <textarea
+                            value={formFields[col] ?? ''}
+                            onChange={e => setFormFields({ ...formFields, [col]: e.target.value })}
+                            className={`w-full p-2.5 font-mono text-sm border rounded-lg resize-y min-h-[80px] outline-none focus:ring-1 focus:ring-blue-500 ${
+                              isDark 
+                                ? 'bg-gray-950 border-gray-800 text-gray-200 focus:ring-blue-500' 
+                                : 'bg-gray-50 border-gray-300 text-gray-800 focus:ring-blue-500'
+                            }`}
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            value={formFields[col] ?? ''}
+                            onChange={e => setFormFields({ ...formFields, [col]: e.target.value })}
+                            className={`w-full p-2.5 font-mono text-sm border rounded-lg outline-none focus:ring-1 focus:ring-blue-500 ${
+                              isDark 
+                                ? 'bg-gray-950 border-gray-800 text-gray-200 focus:ring-blue-500' 
+                                : 'bg-gray-55 border-gray-300 text-gray-800 focus:ring-blue-500'
+                            }`}
+                          />
+                        )
+                      ) : (
+                        <div className={`p-2.5 font-mono text-sm border rounded-lg truncate select-all ${
+                          isDark 
+                            ? 'bg-gray-950/40 border-gray-800/60 text-gray-400' 
+                            : 'bg-gray-100 border-gray-200 text-gray-500'
+                        }`} title={valString}>
+                          {valString === '' ? <span className="italic opacity-45">null</span> : valString}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className={`p-4 border-t flex justify-end items-center gap-3 ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
+              <button
+                onClick={() => setRecordModal(null)}
+                className={`px-4 py-2 text-xs font-semibold rounded-lg border transition-colors ${
+                  isDark ? 'border-gray-700 hover:bg-gray-800 text-gray-300' : 'border-gray-300 hover:bg-gray-100 text-gray-600'
+                }`}
+              >
+                Cancelar
+              </button>
+              
+              {columns.some(c => c.toUpperCase() === 'ROWID') && (
+                <button
+                  onClick={() => handleSaveRecord(recordModal.rowIndex, formFields)}
+                  disabled={isUpdatingRecord}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 transition-all shadow-md disabled:opacity-55 cursor-pointer"
+                >
+                  {isUpdatingRecord ? (
+                    <>
+                      <span className="inline-block w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                      <span>Guardando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>Guardar Cambios</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Cell Content Modal */}
       {cellModal.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -578,7 +857,10 @@ export default function ResultsTable({ data, columns, sql, hasMore = false, isLo
                 {cellModal.isEditable && (
                   <button
                     onClick={async () => {
-                      if (cellModal.rowIndex !== undefined) {
+                      if (cellModal.onSave) {
+                        cellModal.onSave(modalTextValue);
+                        setCellModal({ isOpen: false, content: '', colName: '' });
+                      } else if (cellModal.rowIndex !== undefined) {
                         await handleSave(cellModal.rowIndex, cellModal.colName, modalTextValue);
                         setCellModal({ isOpen: false, content: '', colName: '' });
                       }
