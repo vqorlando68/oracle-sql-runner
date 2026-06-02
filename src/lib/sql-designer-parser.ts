@@ -133,6 +133,9 @@ function compileWhereItem(
     return `(${activeChildren.join(` ${item.conjunction} `)})`;
   } else {
     // It's a rule
+    if (item.operator === 'RAW') {
+      return item.value || '';
+    }
     if (!item.column) return '';
     const tablePrefix = useTableAlias && item.table ? `${item.table}.` : '';
     const field = `${tablePrefix}${item.column}`;
