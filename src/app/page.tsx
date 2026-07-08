@@ -28,6 +28,7 @@ import CompareObjectsModal from '@/components/CompareObjectsModal';
 import DescribeObjectModal from '@/components/DescribeObjectModal';
 import BackupModal from '@/components/BackupModal';
 import HelpModal from '@/components/HelpModal';
+import DbMonitor from '@/components/DbMonitor';
 import { generatePlsqlOutline, OutlineNode } from '@/lib/plsql-parser';
 
 // ── Toolbar Icon Button ──────────────────────────────────────────────────────
@@ -179,6 +180,7 @@ export default function Home() {
   const [isCompareOpen, setIsCompareOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isMonitorOpen, setIsMonitorOpen] = useState(false);
   const [columnsPanelHeight, setColumnsPanelHeight] = useState(250);
   const [showNavigator, setShowNavigator] = useState(true);
   const [expandedNavigatorNodes, setExpandedNavigatorNodes] = useState<Record<string, boolean>>({});
@@ -2190,6 +2192,13 @@ export default function Home() {
           />
           <TbBtn
             isDark={isDark}
+            icon={<Activity className={iconSize} />}
+            label="Monitorear BD"
+            onClick={() => setIsMonitorOpen(true)}
+            variant="warning"
+          />
+          <TbBtn
+            isDark={isDark}
             icon={showMetadataPanel ? <EyeOff className={iconSize} /> : <Eye className={iconSize} />}
             label={showMetadataPanel ? "Ocultar Explorador de Tablas" : "Mostrar Explorador de Tablas"}
             onClick={() => setShowMetadataPanel(!showMetadataPanel)}
@@ -3000,6 +3009,13 @@ export default function Home() {
         isOpen={isHelpOpen}
         onClose={() => setIsHelpOpen(false)}
         isDark={isDark}
+      />
+      <DbMonitor
+        isOpen={isMonitorOpen}
+        onClose={() => setIsMonitorOpen(false)}
+        isDark={isDark}
+        activeConnection={activeConnection}
+        showToast={showToast}
       />
 
       {/* Menu contextual para pestañas */}
