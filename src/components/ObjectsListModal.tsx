@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   X, Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, 
   RefreshCw, Database, ShieldAlert, CheckCircle, HelpCircle, Eye,
-  FileText, Activity, AlertTriangle, Users
+  FileText, Activity, AlertTriangle, Users, ChevronDown
 } from 'lucide-react';
 
 interface ObjectsListModalProps {
@@ -37,10 +37,53 @@ const getTitleForType = (type: string) => {
   return `Objetos de tipo ${type}`;
 };
 
+// Helper to parse session info with regex fallback in case of Oracle path backslashes
+const parseSessionInfo = (infoStr: string) => {
+  if (!infoStr) return null;
+  if (typeof infoStr === 'object') return infoStr;
+  
+  try {
+    const sanitized = infoStr
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+      .trim();
+    return JSON.parse(sanitized);
+  } catch (e) {
+    try {
+      const getVal = (key: string) => {
+        const stringPattern = new RegExp(`"${key}"\\s*:\\s*"([^"]*)"`);
+        const numPattern = new RegExp(`"${key}"\\s*:\\s*(\\d+)`);
+        
+        const strMatch = infoStr.match(stringPattern);
+        if (strMatch) return strMatch[1];
+        
+        const numMatch = infoStr.match(numPattern);
+        if (numMatch) return numMatch[1];
+        
+        return '';
+      };
+      
+      return {
+        serial: getVal('serial'),
+        machine: getVal('machine'),
+        osuser: getVal('osuser'),
+        logon_time: getVal('logon_time'),
+        sql_id: getVal('sql_id'),
+        module: getVal('module'),
+        event: getVal('event'),
+        wait_sec: getVal('wait_sec'),
+        blocking_session: getVal('blocking_session')
+      };
+    } catch (err) {
+      return null;
+    }
+  }
+};
+
 // Generates high-fidelity mock data for fallback
-const getMockData = (type: string, query: string, page: number, pageSize: number) => {
+const getMockData = (type: string, query: string, page: number, pageSize: number, querySchema?: string) => {
   const t = type.toUpperCase();
   let allItems: any[] = [];
+  const targetSchema = querySchema && querySchema.toUpperCase() !== 'ALL' ? querySchema.toUpperCase() : null;
 
   const filterQuery = (name: string) => {
     if (!query) return true;
@@ -49,13 +92,96 @@ const getMockData = (type: string, query: string, page: number, pageSize: number
 
   if (t === 'SESSION') {
     allItems = [
-      { name: "SID 121", type: "sqlplus.exe", status: "ACTIVE", owner: "TEKER_PROD", info: "Espera: 0s" },
-      { name: "SID 142", type: "NextJS App", status: "ACTIVE", owner: "TEKER_DEV", info: "Espera: 45s" },
-      { name: "SID 99", type: "JDBC Client", status: "INACTIVE", owner: "SYS", info: "Espera: 120s" },
-      { name: "SID 204", type: "TOAD.exe", status: "ACTIVE", owner: "TEKER_PROD", info: "Espera: 3s" },
-      { name: "SID 15", type: "plsqldev.exe", status: "ACTIVE", owner: "TEKER_STAGE", info: "Espera: 0s" },
-      { name: "SID 88", type: "NodeApp", status: "ACTIVE", owner: "TEKER_PROD", info: "Espera: 0s" },
-      { name: "SID 23", type: "PythonWorker", status: "INACTIVE", owner: "AUDSYS", info: "Espera: 3600s" }
+      { 
+        name: "SID 121", 
+        type: "sqlplus.exe", 
+        status: "ACTIVE", 
+        owner: "TEKER_PROD", 
+        created: "2026-07-08 10:15:30",
+        info: JSON.stringify({
+          serial: 54321,
+          machine: "srv-prod-db01",
+          osuser: "oracle",
+          logon_time: "2026-07-08 10:15:30",
+          sql_id: "7w8v9u1t2s3r4",
+          module: "SQL*Plus",
+          event: "db file sequential read",
+          wait_sec: 0,
+          blocking_session: ""
+        })
+      },
+      { 
+        name: "SID 142", 
+        type: "NextJS App", 
+        status: "ACTIVE", 
+        owner: "TEKER_DEV", 
+        created: "2026-07-08 12:00:15",
+        info: JSON.stringify({
+          serial: 11223,
+          machine: "web-server-02",
+          osuser: "ubuntu",
+          logon_time: "2026-07-08 12:00:15",
+          sql_id: "3g4h5j6k7l8m9",
+          module: "NextJS Backend",
+          event: "SQL*Net message from client",
+          wait_sec: 45,
+          blocking_session: ""
+        })
+      },
+      { 
+        name: "SID 99", 
+        type: "JDBC Client", 
+        status: "INACTIVE", 
+        owner: "SYS", 
+        created: "2026-07-08 08:30:00",
+        info: JSON.stringify({
+          serial: 99887,
+          machine: "app-worker-01",
+          osuser: "tomcat",
+          logon_time: "2026-07-08 08:30:00",
+          sql_id: "",
+          module: "JDBC Thin Client",
+          event: "SQL*Net message from client",
+          wait_sec: 120,
+          blocking_session: ""
+        })
+      },
+      { 
+        name: "SID 204", 
+        type: "TOAD.exe", 
+        status: "ACTIVE", 
+        owner: "TEKER_PROD", 
+        created: "2026-07-08 14:05:00",
+        info: JSON.stringify({
+          serial: 44556,
+          machine: "pc-admin-orlando",
+          osuser: "OrlandoArturo",
+          logon_time: "2026-07-08 14:05:00",
+          sql_id: "9x8y7z6w5v4u3",
+          module: "TOAD",
+          event: "enq: TX - row lock contention",
+          wait_sec: 3,
+          blocking_session: "121"
+        })
+      },
+      { 
+        name: "SID 15", 
+        type: "plsqldev.exe", 
+        status: "ACTIVE", 
+        owner: "TEKER_STAGE", 
+        created: "2026-07-08 15:10:00",
+        info: JSON.stringify({
+          serial: 33442,
+          machine: "pc-dev-juan",
+          osuser: "JuanPerez",
+          logon_time: "2026-07-08 15:10:00",
+          sql_id: "",
+          module: "PL/SQL Developer",
+          event: "SQL*Net message from client",
+          wait_sec: 0,
+          blocking_session: ""
+        })
+      }
     ];
   } else if (t === 'USER') {
     allItems = [
@@ -94,6 +220,7 @@ const getMockData = (type: string, query: string, page: number, pageSize: number
     ];
     for (let i = 1; i <= 80; i++) {
       const sch = schemasList[i % schemasList.length];
+      if (targetSchema && sch !== targetSchema) continue;
       const baseName = jobNames[i % jobNames.length];
       const isEnabled = i % 7 !== 0;
       allItems.push({
@@ -152,6 +279,14 @@ export default function ObjectsListModal({
   const [totalPages, setTotalPages] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
+
+  const toggleSession = (sid: string) => {
+    setExpandedSessions(prev => ({
+      ...prev,
+      [sid]: !prev[sid]
+    }));
+  };
 
   const fetchObjects = async (page: number, query: string) => {
     if (!isOpen || !objectType) return;
@@ -204,7 +339,7 @@ export default function ObjectsListModal({
     } catch (err: any) {
       console.warn("Falló consulta de objetos paginados real, cargando datos mock:", err.message);
       setIsDemoMode(true);
-      const parsed = getMockData(objectType, query, page, pageSize);
+      const parsed = getMockData(objectType, query, page, pageSize, schema);
       setItems(parsed.items);
       setTotalRecords(parsed.total_records);
       setTotalPages(parsed.total_pages);
@@ -362,44 +497,132 @@ export default function ObjectsListModal({
                       statusBadge = 'bg-slate-500/10 text-slate-400 border-slate-500/25';
                     }
 
+                    const isSession = objectType.toUpperCase() === 'SESSION';
+                    const sessionDetail = isSession ? parseSessionInfo(item.info) : null;
+
                     return (
-                      <tr 
-                        key={idx}
-                        className={`border-b border-slate-800/10 last:border-0 hover:bg-slate-500/5 transition-colors font-medium ${
-                          isDark ? 'odd:bg-slate-900/30' : 'odd:bg-slate-50/40'
-                        }`}
-                      >
-                        <td className="py-2.5 px-4 font-mono font-bold text-amber-500 max-w-[220px] truncate" title={item.name}>
-                          {item.name}
-                        </td>
-                        <td className="py-2.5 px-3 font-semibold opacity-75">{item.type}</td>
-                        <td className="py-2.5 px-3 opacity-60">{item.owner || '-'}</td>
-                        <td className="py-2.5 px-3">
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border inline-block ${statusBadge}`}>
-                            {item.status}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 opacity-65 font-mono">{item.created || '-'}</td>
-                        <td className={`py-2.5 px-4 font-mono opacity-80 ${
-                          objectType.toUpperCase() === 'INDEX' || objectType.toUpperCase() === 'JOB' 
-                            ? 'text-left' 
-                            : 'text-right'
-                        }`}>
-                          {objectType.toUpperCase() === 'INDEX' 
-                            ? (item.info || '-') 
-                            : objectType.toUpperCase() === 'JOB'
-                              ? (
-                                  <span className={`px-2 py-0.5 rounded border inline-block text-[9px] font-black uppercase tracking-wider ${
-                                    item.info === 'TRUE' || item.info === 'SÍ' || item.info === 'YES'
-                                      ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/25'
-                                      : 'bg-rose-500/10 text-rose-500 border-rose-500/25'
-                                  }`}>
-                                    {item.info === 'TRUE' || item.info === 'SÍ' || item.info === 'YES' ? 'SÍ' : 'NO'}
-                                  </span>
-                                )
-                              : (item.last_ddl || item.info || '-')}
-                        </td>
-                      </tr>
+                      <React.Fragment key={idx}>
+                        <tr 
+                          onClick={() => {
+                            if (isSession) {
+                              toggleSession(item.name);
+                            }
+                          }}
+                          className={`border-b border-slate-800/10 last:border-0 hover:bg-slate-500/5 transition-colors font-medium ${
+                            isSession ? 'cursor-pointer' : ''
+                          } ${
+                            isDark ? 'odd:bg-slate-900/30' : 'odd:bg-slate-50/40'
+                          }`}
+                        >
+                          <td className="py-2.5 px-4 font-mono font-bold text-amber-500 max-w-[220px] truncate" title={item.name}>
+                            <div className="flex items-center gap-2">
+                              {isSession && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleSession(item.name);
+                                  }}
+                                  className="p-1 rounded hover:bg-slate-500/15 text-slate-400 hover:text-amber-500 transition-colors"
+                                >
+                                  {expandedSessions[item.name] ? (
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <ChevronRight className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              )}
+                              <span>{item.name}</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold opacity-75">{item.type}</td>
+                          <td className="py-2.5 px-3 opacity-60">{item.owner || '-'}</td>
+                          <td className="py-2.5 px-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border inline-block ${statusBadge}`}>
+                              {item.status}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 opacity-65 font-mono">{item.created || '-'}</td>
+                          <td className={`py-2.5 px-4 font-mono opacity-80 ${
+                            objectType.toUpperCase() === 'INDEX' || objectType.toUpperCase() === 'JOB' 
+                              ? 'text-left' 
+                              : 'text-right'
+                          }`}>
+                            {objectType.toUpperCase() === 'INDEX' 
+                              ? (item.info || '-') 
+                              : objectType.toUpperCase() === 'JOB'
+                                ? (
+                                    <span className={`px-2 py-0.5 rounded border inline-block text-[9px] font-black uppercase tracking-wider ${
+                                      item.info === 'TRUE' || item.info === 'SÍ' || item.info === 'YES'
+                                        ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/25'
+                                        : 'bg-rose-500/10 text-rose-500 border-rose-500/25'
+                                    }`}>
+                                      {item.info === 'TRUE' || item.info === 'SÍ' || item.info === 'YES' ? 'SÍ' : 'NO'}
+                                    </span>
+                                  )
+                                : isSession
+                                  ? (
+                                      (() => {
+                                        const parsed = parseSessionInfo(item.info);
+                                        if (parsed) {
+                                          return `Espera: ${parsed.wait_sec !== undefined ? parsed.wait_sec : 0}s`;
+                                        }
+                                        return item.info || 'Espera: 0s';
+                                      })()
+                                    )
+                                  : (item.last_ddl || item.info || '-')}
+                          </td>
+                        </tr>
+
+                        {isSession && expandedSessions[item.name] && (
+                          <tr className="bg-slate-500/5 dark:bg-slate-950/20 border-b border-slate-800/10">
+                            <td colSpan={6} className="p-4">
+                              {sessionDetail ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-[11px] sm:text-xs font-medium max-w-4xl animate-fadeIn pl-7">
+                                  <div className="bg-slate-950/20 dark:bg-slate-900/50 border border-slate-800/30 rounded-lg p-3">
+                                    <span className="text-[9px] uppercase tracking-wider opacity-45 font-bold block mb-2 text-amber-500">Identidad de Conexión</span>
+                                    <div className="space-y-1.5 font-mono">
+                                      <p><span className="opacity-60">Serial #:</span> <span className="text-slate-200 dark:text-slate-300 font-bold">{sessionDetail.serial || '-'}</span></p>
+                                      <p><span className="opacity-60">Usuario SO:</span> <span className="text-sky-400 font-bold">{sessionDetail.osuser || '-'}</span></p>
+                                      <p><span className="opacity-60">Máquina:</span> <span className="text-emerald-400 truncate block max-w-[200px]" title={sessionDetail.machine}>{sessionDetail.machine || '-'}</span></p>
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-slate-950/20 dark:bg-slate-900/50 border border-slate-800/30 rounded-lg p-3">
+                                    <span className="text-[9px] uppercase tracking-wider opacity-45 font-bold block mb-2 text-amber-500">Actividad y Esperas</span>
+                                    <div className="space-y-1.5 font-mono">
+                                      <p><span className="opacity-60">SQL ID:</span> <span className={sessionDetail.sql_id ? "text-pink-500 font-bold" : "opacity-60"}>{sessionDetail.sql_id || 'Ninguno'}</span></p>
+                                      <p><span className="opacity-60">Evento:</span> <span className="text-amber-500 truncate block max-w-[200px]" title={sessionDetail.event}>{sessionDetail.event || 'Ninguno'}</span></p>
+                                      <p><span className="opacity-60">Tiempo Espera:</span> <span className="text-rose-500 font-bold">{sessionDetail.wait_sec}s</span></p>
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-slate-950/20 dark:bg-slate-900/50 border border-slate-800/30 rounded-lg p-3">
+                                    <span className="text-[9px] uppercase tracking-wider opacity-45 font-bold block mb-2 text-amber-500">Origen y Control</span>
+                                    <div className="space-y-1.5 font-mono">
+                                      <p><span className="opacity-60">Logon Time:</span> <span className="text-slate-300 font-bold">{sessionDetail.logon_time || '-'}</span></p>
+                                      <p><span className="opacity-60">Módulo:</span> <span className="text-indigo-400 truncate block max-w-[200px]" title={sessionDetail.module}>{sessionDetail.module || 'Ninguno'}</span></p>
+                                      <p>
+                                        <span className="opacity-60">Bloqueado por:</span>{' '}
+                                        {sessionDetail.blocking_session ? (
+                                          <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-500 border border-red-500/25 font-black uppercase text-[9px] animate-pulse">
+                                            SID {sessionDetail.blocking_session}
+                                          </span>
+                                        ) : (
+                                          <span className="text-emerald-500 font-bold">Ninguno</span>
+                                        )}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="font-mono text-xs text-slate-400 pl-7">
+                                  Detalle básico: <span className="text-amber-500">{item.info || '-'}</span>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>

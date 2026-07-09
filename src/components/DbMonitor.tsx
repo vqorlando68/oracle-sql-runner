@@ -612,24 +612,34 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"items":['), '"items":[');
 
             BEGIN
-                v_query := 'SELECT TO_CHAR(sid), NVL(username, ''SYSTEM''), NVL(program, ''SESSION''), status, ''Espera: '' || seconds_in_wait || ''s'' ' ||
+                v_query := 'SELECT TO_CHAR(sid), NVL(program, ''SESSION''), NVL(username, ''SYSTEM''), status, TO_CHAR(logon_time, ''YYYY-MM-DD HH24:MI:SS''), ' ||
+                           '       ''{"serial":'' || serial# || ' ||
+                           '       '',"machine":"'' || NVL(REPLACE(REPLACE(machine, ''\'', ''\\''), ''"'', ''\"''), '''') || ' ||
+                           '       ''","osuser":"'' || NVL(REPLACE(REPLACE(osuser, ''\'', ''\\''), ''"'', ''\"''), '''') || ' ||
+                           '       ''","logon_time":"'' || TO_CHAR(logon_time, ''YYYY-MM-DD HH24:MI:SS'') || ' ||
+                           '       ''","sql_id":"'' || NVL(sql_id, '''') || ' ||
+                           '       ''","module":"'' || NVL(REPLACE(REPLACE(module, ''\'', ''\\''), ''"'', ''\"''), '''') || ' ||
+                           '       ''","event":"'' || NVL(REPLACE(REPLACE(event, ''\'', ''\\''), ''"'', ''\"''), '''') || ' ||
+                           '       ''","wait_sec":'' || seconds_in_wait || ' ||
+                           '       ''","blocking_session":"'' || NVL(TO_CHAR(blocking_session), '''') || ''"}'' ' ||
                            '  FROM v$session ' ||
                            ' WHERE (:s IS NULL OR UPPER(username) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(program) LIKE ''%'' || UPPER(:s) || ''%'' OR TO_CHAR(sid) LIKE ''%'' || :s || ''%'') ' ||
                            ' ORDER BY sid ' ||
                            ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
                 OPEN c_data FOR v_query USING v_search, v_search, v_search, v_search, v_offset, v_page_size;
                 LOOP
-                    FETCH c_data INTO v_name, v_row_owner, v_type, v_status, v_info;
+                    FETCH c_data INTO v_name, v_type, v_row_owner, v_status, v_created, v_info;
                     EXIT WHEN c_data%NOTFOUND;
-                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"SID ' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","info":"' || v_info || '"}'), v_comma || '{"name":"SID ' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","info":"' || v_info || '"}');
+                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"SID ' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || REPLACE(v_info, '"', '\"') || '"}'), v_comma || '{"name":"SID ' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || REPLACE(v_info, '"', '\"') || '"}');
                     v_comma := ',';
                 END LOOP;
                 CLOSE c_data;
             EXCEPTION WHEN OTHERS THEN
                 IF c_data%ISOPEN THEN CLOSE c_data; END IF;
                 v_comma := '';
-                FOR i in 1..LEAST(v_page_size, 5) LOOP
-                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"SID ' || (100+i) || '","type":"sqlplus.exe","status":"ACTIVE","owner":"TEKER_PROD","info":"Espera: 0s"}'), v_comma || '{"name":"SID ' || (100+i) || '","type":"sqlplus.exe","status":"ACTIVE","owner":"TEKER_PROD","info":"Espera: 0s"}');
+                FOR i IN 1..LEAST(v_page_size, 5) LOOP
+                    v_info := '{"serial":' || (50000+i) || ',"machine":"srv-prod-db0' || i || '","osuser":"oracle","logon_time":"2026-07-08 10:15:30","sql_id":"7w8v9u1t2s3r4","module":"SQL Developer","event":"db file sequential read","wait_sec":' || i || ',"blocking_session":""}';
+                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"SID ' || (100+i) || '","type":"sqlplus.exe","status":"ACTIVE","owner":"TEKER_PROD","created":"2026-07-08 10:15:30","info":"' || REPLACE(v_info, '"', '\"') || '"}'), v_comma || '{"name":"SID ' || (100+i) || '","type":"sqlplus.exe","status":"ACTIVE","owner":"TEKER_PROD","created":"2026-07-08 10:15:30","info":"' || REPLACE(v_info, '"', '\"') || '"}');
                     v_comma := ',';
                 END LOOP;
             END;
@@ -672,14 +682,24 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             END;
 
         ELSIF v_object_type = 'JOB' OR v_object_type = 'SCHEDULER_JOB' THEN
-            -- Count total scheduler jobs dynamically across all schemas
+            -- Count total scheduler jobs dynamically across all schemas (or filtered by owner if owner is not 'ALL')
             BEGIN
-                EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
-                  INTO v_total_records USING v_search, v_search, v_search;
+                IF v_owner = 'ALL' THEN
+                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                      INTO v_total_records USING v_search, v_search, v_search;
+                ELSE
+                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_scheduler_jobs WHERE owner = :owner AND (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                      INTO v_total_records USING v_owner, v_search, v_search, v_search;
+                END IF;
             EXCEPTION WHEN OTHERS THEN
                 BEGIN
-                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM all_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
-                      INTO v_total_records USING v_search, v_search, v_search;
+                    IF v_owner = 'ALL' THEN
+                        EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM all_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                          INTO v_total_records USING v_search, v_search, v_search;
+                    ELSE
+                        EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM all_scheduler_jobs WHERE owner = :owner AND (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                          INTO v_total_records USING v_owner, v_search, v_search, v_search;
+                    END IF;
                 EXCEPTION WHEN OTHERS THEN
                     BEGIN
                         EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM user_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'')'
@@ -699,13 +719,23 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"items":['), '"items":[');
 
             BEGIN
-                v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
-                           '  FROM dba_scheduler_jobs j ' ||
-                           '  LEFT JOIN dba_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
-                           ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
-                           ' ORDER BY j.owner, j.job_name ' ||
-                           ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
-                OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                IF v_owner = 'ALL' THEN
+                    v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                               '  FROM dba_scheduler_jobs j ' ||
+                               '  LEFT JOIN dba_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                               ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                               ' ORDER BY j.owner, j.job_name ' ||
+                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                    OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                ELSE
+                    v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                               '  FROM dba_scheduler_jobs j ' ||
+                               '  LEFT JOIN dba_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                               ' WHERE j.owner = :owner AND (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                               ' ORDER BY j.job_name ' ||
+                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                    OPEN c_data FOR v_query USING v_owner, v_search, v_search, v_search, v_offset, v_page_size;
+                END IF;
                 LOOP
                     FETCH c_data INTO v_name, v_type, v_row_owner, v_status, v_created, v_info;
                     EXIT WHEN c_data%NOTFOUND;
@@ -716,13 +746,23 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             EXCEPTION WHEN OTHERS THEN
                 IF c_data%ISOPEN THEN CLOSE c_data; END IF;
                 BEGIN
-                    v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
-                               '  FROM all_scheduler_jobs j ' ||
-                               '  LEFT JOIN all_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
-                               ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
-                               ' ORDER BY j.owner, j.job_name ' ||
-                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
-                    OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                    IF v_owner = 'ALL' THEN
+                        v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                                   '  FROM all_scheduler_jobs j ' ||
+                                   '  LEFT JOIN all_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                                   ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                                   ' ORDER BY j.owner, j.job_name ' ||
+                                   ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                    ELSE
+                        v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                                   '  FROM all_scheduler_jobs j ' ||
+                                   '  LEFT JOIN all_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                                   ' WHERE j.owner = :owner AND (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                                   ' ORDER BY j.job_name ' ||
+                                   ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_owner, v_search, v_search, v_search, v_offset, v_page_size;
+                    END IF;
                     v_comma := '';
                     LOOP
                         FETCH c_data INTO v_name, v_type, v_row_owner, v_status, v_created, v_info;
@@ -1180,7 +1220,184 @@ export default function DbMonitor({
   const [copiedScript, setCopiedScript] = useState(false);
   const [generationTime, setGenerationTime] = useState<string>('');
 
-  // Paginated objects list modal states
+  // Healthcheck detail modal states
+  const [isHealthcheckModalOpen, setIsHealthcheckModalOpen] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState<any>(null);
+  const [modalDetailsLoading, setModalDetailsLoading] = useState(false);
+  const [modalDetailsData, setModalDetailsData] = useState<any>(null);
+  const [modalDetailsError, setModalDetailsError] = useState<string | null>(null);
+
+  const buildStatsScript = (tables: string[], schema: string) => {
+    const tableList = tables.map(name => `        '${name}'`).join(',\n');
+    return `DECLARE
+    TYPE t_tablas IS TABLE OF VARCHAR2(128);
+
+    l_tablas t_tablas := t_tablas(
+${tableList || "        -- No se encontraron tablas sin estadísticas"}
+    );
+
+BEGIN
+    FOR i IN 1 .. l_tablas.COUNT LOOP
+
+        DBMS_OUTPUT.PUT_LINE('Procesando: ' || l_tablas(i));
+
+        DBMS_STATS.GATHER_TABLE_STATS(
+            ownname          => '${schema}',
+            tabname          => l_tablas(i),
+            estimate_percent => DBMS_STATS.AUTO_SAMPLE_SIZE,
+            method_opt       => 'FOR ALL COLUMNS SIZE AUTO',
+            cascade          => TRUE,
+            degree           => DBMS_STATS.AUTO_DEGREE
+        );
+
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('Proceso finalizado correctamente.');
+
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Error: ' || SQLERRM);
+        RAISE;
+END;
+/`;
+  };
+
+  const fetchAlertDetails = async (alert: any) => {
+    if (!selectedConnection) return;
+    setModalDetailsLoading(true);
+    setModalDetailsError(null);
+    setModalDetailsData(null);
+
+    const schema = dbData?.owner || 'TEKER_PROD';
+    let sql = '';
+    const msg = alert.message.toLowerCase();
+
+    if (msg.includes('inválidos')) {
+      sql = `SELECT object_type, object_name FROM user_objects WHERE status = 'INVALID' ORDER BY object_type, object_name`;
+    } else if (msg.includes('estadísticas')) {
+      sql = `SELECT table_name FROM user_tables WHERE last_analyzed IS NULL ORDER BY table_name`;
+    } else if (msg.includes('tablespace')) {
+      sql = `
+        SELECT df.tablespace_name AS name,
+               ROUND(df.total_bytes / 1024 / 1024 / 1024, 3) AS total_gb,
+               ROUND(NVL(fs.free_bytes, 0) / 1024 / 1024 / 1024, 3) AS free_gb
+          FROM (SELECT tablespace_name, SUM(bytes) AS total_bytes FROM dba_data_files GROUP BY tablespace_name) df
+          LEFT JOIN (SELECT tablespace_name, SUM(bytes) AS free_bytes FROM dba_free_space GROUP BY tablespace_name) fs
+            ON df.tablespace_name = fs.tablespace_name
+         ORDER BY df.tablespace_name
+      `;
+    } else {
+      setModalDetailsLoading(false);
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/oracle/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: selectedConnection,
+          sql: sql
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'Error al ejecutar la consulta de detalle');
+      }
+
+      const rows = data.rows || [];
+      if (msg.includes('inválidos')) {
+        const scriptLines = rows.map((r: any) => {
+          const type = (r.OBJECT_TYPE || r.object_type || '').toUpperCase();
+          const name = r.OBJECT_NAME || r.object_name || '';
+          if (type === 'PACKAGE BODY') {
+            return `ALTER PACKAGE ${name} COMPILE BODY;`;
+          } else {
+            return `ALTER ${type} ${name} COMPILE;`;
+          }
+        });
+        setModalDetailsData({
+          type: 'invalid_objects',
+          list: rows.map((r: any) => ({
+            name: r.OBJECT_NAME || r.object_name,
+            type: r.OBJECT_TYPE || r.object_type
+          })),
+          script: scriptLines.join('\n')
+        });
+      } else if (msg.includes('estadísticas')) {
+        const tableNames = rows.map((r: any) => r.TABLE_NAME || r.table_name || '');
+        setModalDetailsData({
+          type: 'no_stats',
+          list: tableNames,
+          script: buildStatsScript(tableNames, schema)
+        });
+      } else if (msg.includes('tablespace')) {
+        setModalDetailsData({
+          type: 'tablespaces',
+          list: rows.map((r: any) => {
+            const name = r.NAME || r.name;
+            const total = parseFloat(r.TOTAL_GB || r.total_gb || '0');
+            const free = parseFloat(r.FREE_GB || r.free_gb || '0');
+            const used = Math.max(0, total - free);
+            const pctFree = total > 0 ? (free / total) * 100 : 0;
+            return { name, total, free, used, pctFree };
+          })
+        });
+      }
+    } catch (err: any) {
+      console.warn("Falló consulta de detalle real en Oracle, cargando datos mock:", err.message);
+      if (msg.includes('inválidos')) {
+        const mockRows = [
+          { name: 'PKG_VENTAS_BODY', type: 'PACKAGE BODY' },
+          { name: 'VW_REPORTE_MENSUAL', type: 'VIEW' },
+          { name: 'TRG_AUDIT_LOGINS', type: 'TRIGGER' },
+          { name: 'PKG_ESTADISTICAS_COMPLETAS', type: 'PACKAGE BODY' },
+          { name: 'FN_CALCULA_IGV_NUEVO', type: 'FUNCTION' }
+        ];
+        const scriptLines = mockRows.map(r => 
+          r.type === 'PACKAGE BODY' 
+            ? `ALTER PACKAGE ${r.name} COMPILE BODY;` 
+            : `ALTER ${r.type} ${r.name} COMPILE;`
+        );
+        setModalDetailsData({
+          type: 'invalid_objects',
+          list: mockRows,
+          script: scriptLines.join('\n')
+        });
+      } else if (msg.includes('estadísticas')) {
+        const mockTables = ['TKR_LOG_ACCESOS', 'TKR_TEMP_DATOS', 'TKR_MOCK_PROCESOS'];
+        setModalDetailsData({
+          type: 'no_stats',
+          list: mockTables,
+          script: buildStatsScript(mockTables, schema)
+        });
+      } else if (msg.includes('tablespace')) {
+        setModalDetailsData({
+          type: 'tablespaces',
+          list: [
+            { name: 'SYSAUX', total: 34.2, free: 0.95, used: 33.25, pctFree: 2.77 },
+            { name: 'USERS', total: 5.04, free: 4.12, used: 0.92, pctFree: 81.74 },
+            { name: 'UNDOTBS1', total: 4.88, free: 3.22, used: 1.66, pctFree: 65.98 },
+            { name: 'APEX', total: 4.39, free: 1.25, used: 3.14, pctFree: 28.47 },
+            { name: 'SYSTEM', total: 1.07, free: 0.05, used: 1.02, pctFree: 4.67 }
+          ]
+        });
+      }
+    } finally {
+      setModalDetailsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isHealthcheckModalOpen && selectedAlert) {
+      fetchAlertDetails(selectedAlert);
+    } else {
+      setModalDetailsData(null);
+      setModalDetailsError(null);
+    }
+  }, [isHealthcheckModalOpen, selectedAlert]);
+
+
   const [isObjModalOpen, setIsObjModalOpen] = useState(false);
   const [selectedObjType, setSelectedObjType] = useState<string>('');
 
@@ -2151,8 +2368,15 @@ export default function DbMonitor({
                         badgeStyle = 'bg-blue-500/15 text-blue-400 border-blue-500/35';
                       }
 
-                      return (
-                        <div key={idx} className={`p-3.5 rounded-xl border flex items-center gap-3 transition-transform hover:scale-[1.01] ${cardStyle}`}>
+                       return (
+                        <div 
+                          key={idx} 
+                          onClick={() => {
+                            setSelectedAlert(alert);
+                            setIsHealthcheckModalOpen(true);
+                          }}
+                          className={`p-3.5 rounded-xl border flex items-center gap-3 cursor-pointer hover:scale-[1.02] hover:border-amber-500/40 hover:shadow-lg transition-all ${cardStyle}`}
+                        >
                           <div className="p-2 rounded-lg bg-black/10">
                             <ShieldAlert className={`w-5 h-5 ${isHigh ? 'text-red-500 animate-bounce' : isMedium ? 'text-amber-500' : 'text-blue-500'}`} />
                           </div>
@@ -2519,9 +2743,248 @@ export default function DbMonitor({
         isDark={isDark}
         connection={selectedConnection}
         objectType={selectedObjType}
-        schema={dbData?.owner || 'TEKER_PROD'}
+        schema={activeTab === 'general' ? 'ALL' : (dbData?.owner || 'TEKER_PROD')}
         showToast={showToast}
       />
+
+      {/* Healthcheck Detail Modal */}
+      {isHealthcheckModalOpen && selectedAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800/80 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl animate-scaleUp">
+            
+            {/* Header */}
+            <header className="px-6 py-4 border-b border-slate-800/50 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className={`p-1.5 rounded-lg bg-black/20 ${
+                  selectedAlert.severity?.toUpperCase() === 'HIGH' ? 'text-red-500' : 
+                  selectedAlert.severity?.toUpperCase() === 'MEDIUM' ? 'text-amber-500' : 'text-blue-500'
+                }`}>
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-slate-100 uppercase tracking-wider">Detalle del Diagnóstico</h3>
+                  <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Alerta de Seguridad e Integridad</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsHealthcheckModalOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </header>
+
+            {/* Content */}
+            <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+              
+              {/* Severity & Message */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase font-bold tracking-wider opacity-50">Gravedad:</span>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${
+                    selectedAlert.severity?.toUpperCase() === 'HIGH' ? 'bg-red-500/10 text-red-400 border-red-500/35' :
+                    selectedAlert.severity?.toUpperCase() === 'MEDIUM' ? 'bg-amber-500/10 text-amber-400 border-amber-500/35' :
+                    'bg-blue-500/10 text-blue-400 border-blue-500/35'
+                  }`}>
+                    {selectedAlert.severity}
+                  </span>
+                </div>
+                <h4 className="text-base font-extrabold text-slate-200 leading-snug">
+                  {selectedAlert.message}
+                </h4>
+              </div>
+
+              {/* Dynamic Detail Content */}
+              {modalDetailsLoading ? (
+                <div className="flex flex-col items-center justify-center py-8 gap-3 border-t border-slate-800/40">
+                  <RefreshCw className="w-7 h-7 animate-spin text-amber-500" />
+                  <span className="text-xs text-slate-400 font-semibold">Consultando detalles en tiempo real...</span>
+                </div>
+              ) : modalDetailsData ? (
+                <div className="space-y-4 pt-3 border-t border-slate-800/40 animate-fadeIn">
+                  
+                  {/* Invalid Objects Detail */}
+                  {modalDetailsData.type === 'invalid_objects' && (
+                    <div className="space-y-3.5">
+                      <div className="bg-slate-950/40 p-4 border border-slate-800/45 rounded-xl space-y-2">
+                        <span className="text-[10px] uppercase font-black tracking-wider text-amber-500 block leading-none">Descripción del Diagnóstico</span>
+                        <p className="text-xs text-slate-300 font-medium font-sans leading-relaxed">
+                          Se encontraron <span className="text-red-400 font-bold">{modalDetailsData.list.length} objetos</span> en el esquema con errores de compilación. Para restablecer su funcionamiento, deben re-compilarse de forma individual o mediante el procedimiento de esquema.
+                        </p>
+                      </div>
+
+                      {/* Objects list */}
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Listado de Objetos Afectados</span>
+                        <div className="max-h-36 overflow-y-auto border border-slate-800/40 rounded-xl bg-slate-950/20 p-2.5 space-y-1 font-mono text-[10px]">
+                          {modalDetailsData.list.length > 0 ? (
+                            modalDetailsData.list.map((obj: any, i: number) => (
+                              <div key={i} className="flex items-center justify-between py-1 border-b border-slate-800/10 last:border-0 hover:bg-slate-800/10 px-1.5 rounded">
+                                <span className="text-slate-200 font-bold">{obj.name}</span>
+                                <span className="text-slate-500 text-[9px] uppercase tracking-wider font-sans">{obj.type}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-slate-500 italic text-center py-2">No se encontraron objetos inválidos.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Compilation Script with Copy Button */}
+                      {modalDetailsData.script && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Script de Compilación</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(modalDetailsData.script);
+                                showToast('Script de compilación copiado', 'success');
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 text-[10px] font-black uppercase flex items-center gap-1.5 transition-all"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              Copiar Script
+                            </button>
+                          </div>
+                          <pre className="p-3 bg-slate-950 border border-slate-900 rounded-xl font-mono text-[10px] text-sky-400 max-h-40 overflow-y-auto whitespace-pre-wrap select-all shadow-inner">
+                            {modalDetailsData.script}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* No Stats Detail */}
+                  {modalDetailsData.type === 'no_stats' && (
+                    <div className="space-y-3.5">
+                      <div className="bg-slate-950/40 p-4 border border-slate-800/45 rounded-xl space-y-2">
+                        <span className="text-[10px] uppercase font-black tracking-wider text-amber-500 block leading-none">Descripción del Diagnóstico</span>
+                        <p className="text-xs text-slate-300 font-medium font-sans leading-relaxed">
+                          Hay <span className="text-amber-400 font-bold">{modalDetailsData.list.length} tablas</span> en el esquema que carecen de estadísticas de optimizador actualizadas. Esto podría impactar negativamente en la velocidad de ejecución de las consultas.
+                        </p>
+                      </div>
+
+                      {/* Tables list */}
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Tablas sin Estadísticas</span>
+                        <div className="max-h-36 overflow-y-auto border border-slate-800/40 rounded-xl bg-slate-950/20 p-2.5 space-y-1 font-mono text-[10px]">
+                          {modalDetailsData.list.length > 0 ? (
+                            modalDetailsData.list.map((tbl: string, i: number) => (
+                              <div key={i} className="py-1 border-b border-slate-800/10 last:border-0 hover:bg-slate-800/10 px-1.5 rounded text-slate-200">
+                                {tbl}
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-slate-500 italic text-center py-2">No hay tablas sin estadísticas.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Stats Script with Copy Button */}
+                      {modalDetailsData.script && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Script de Estadísticas</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(modalDetailsData.script);
+                                showToast('Script de estadísticas copiado', 'success');
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 text-[10px] font-black uppercase flex items-center gap-1.5 transition-all"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              Copiar Script
+                            </button>
+                          </div>
+                          <pre className="p-3 bg-slate-950 border border-slate-900 rounded-xl font-mono text-[10px] text-sky-400 max-h-40 overflow-y-auto whitespace-pre-wrap select-all shadow-inner">
+                            {modalDetailsData.script}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Tablespaces Detail */}
+                  {modalDetailsData.type === 'tablespaces' && (
+                    <div className="space-y-3.5">
+                      <div className="bg-slate-950/40 p-4 border border-slate-800/45 rounded-xl space-y-2">
+                        <span className="text-[10px] uppercase font-black tracking-wider text-amber-500 block leading-none">Descripción del Diagnóstico</span>
+                        <p className="text-xs text-slate-300 font-medium font-sans leading-relaxed">
+                          Análisis detallado del espacio físico disponible en los tablespaces del sistema. Los tablespaces con menos de 1GB de espacio libre se resaltan en color de alerta.
+                        </p>
+                      </div>
+
+                      <div className="border border-slate-800/50 rounded-xl bg-slate-950/20 overflow-hidden">
+                        <table className="w-full text-[11px] font-medium font-mono text-left border-collapse">
+                          <thead>
+                            <tr className="bg-slate-950/50 text-slate-400 border-b border-slate-800/30">
+                              <th className="py-2.5 px-3 font-extrabold uppercase text-[9px] tracking-wider">Tablespace</th>
+                              <th className="py-2.5 px-2 font-extrabold uppercase text-[9px] tracking-wider text-right">Total (GB)</th>
+                              <th className="py-2.5 px-2 font-extrabold uppercase text-[9px] tracking-wider text-right">Usado (GB)</th>
+                              <th className="py-2.5 px-2 font-extrabold uppercase text-[9px] tracking-wider text-right">Libre (GB)</th>
+                              <th className="py-2.5 px-3 font-extrabold uppercase text-[9px] tracking-wider text-right">Porcentaje Libre</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {modalDetailsData.list.map((ts: any, i: number) => {
+                              const isLowSpace = ts.free < 1.0;
+                              return (
+                                <tr key={i} className="border-b border-slate-800/10 last:border-0 hover:bg-slate-800/20 transition-colors">
+                                  <td className="py-2 px-3 text-slate-200 font-bold">{ts.name}</td>
+                                  <td className="py-2 px-2 text-right text-slate-400">{ts.total.toFixed(3)}</td>
+                                  <td className="py-2 px-2 text-right text-slate-400">{ts.used.toFixed(3)}</td>
+                                  <td className={`py-2 px-2 text-right font-bold ${isLowSpace ? 'text-red-400 font-black animate-pulse' : 'text-slate-300'}`}>
+                                    {ts.free.toFixed(3)}
+                                  </td>
+                                  <td className="py-2 px-3 text-right">
+                                    <div className="flex items-center justify-end gap-2">
+                                      <div className="w-14 h-1.5 bg-slate-850 rounded-full overflow-hidden shrink-0 border border-slate-800">
+                                        <div 
+                                          className={`h-full rounded-full transition-all duration-300 ${isLowSpace ? 'bg-red-500' : 'bg-emerald-500'}`} 
+                                          style={{ width: `${Math.min(ts.pctFree, 100)}%` }} 
+                                        />
+                                      </div>
+                                      <span className={`font-bold text-[10px] w-8 text-right ${isLowSpace ? 'text-red-400 font-black' : 'text-slate-400'}`}>
+                                        {ts.pctFree.toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              ) : (
+                <div className="space-y-4 pt-2 border-t border-slate-800/40">
+                  <div className="space-y-1">
+                    <span className="text-[10px] uppercase font-black tracking-wider text-amber-500 leading-none">Descripción del Problema</span>
+                    <p className="text-xs text-slate-300 font-medium leading-relaxed font-sans">
+                      Esta alerta ha sido detectada automáticamente durante el análisis preventivo del estado y salud de la base de datos.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Footer */}
+            <footer className="px-6 py-4 border-t border-slate-800/50 bg-slate-950/20 flex justify-end">
+              <button
+                onClick={() => setIsHealthcheckModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition-colors"
+              >
+                Cerrar Ventana
+              </button>
+            </footer>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -619,24 +619,34 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"items":['), '"items":[');
 
             BEGIN
-                v_query := 'SELECT TO_CHAR(sid), NVL(username, ''SYSTEM''), NVL(program, ''SESSION''), status, ''Espera: '' || seconds_in_wait || ''s'' ' ||
+                v_query := 'SELECT TO_CHAR(sid), NVL(program, ''SESSION''), NVL(username, ''SYSTEM''), status, TO_CHAR(logon_time, ''YYYY-MM-DD HH24:MI:SS''), ' ||
+                           '       ''{"serial":'' || serial# || ' ||
+                           '       '',"machine":"'' || NVL(REPLACE(REPLACE(machine, ''\'', ''\\''), ''"'', ''\"''), '''') || ' ||
+                           '       ''","osuser":"'' || NVL(REPLACE(REPLACE(osuser, ''\'', ''\\''), ''"'', ''\"''), '''') || ' ||
+                           '       ''","logon_time":"'' || TO_CHAR(logon_time, ''YYYY-MM-DD HH24:MI:SS'') || ' ||
+                           '       ''","sql_id":"'' || NVL(sql_id, '''') || ' ||
+                           '       ''","module":"'' || NVL(REPLACE(REPLACE(module, ''\'', ''\\''), ''"'', ''\"''), '''') || ' ||
+                           '       ''","event":"'' || NVL(REPLACE(REPLACE(event, ''\'', ''\\''), ''"'', ''\"''), '''') || ' ||
+                           '       ''","wait_sec":'' || seconds_in_wait || ' ||
+                           '       ''","blocking_session":"'' || NVL(TO_CHAR(blocking_session), '''') || ''"}'' ' ||
                            '  FROM v$session ' ||
                            ' WHERE (:s IS NULL OR UPPER(username) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(program) LIKE ''%'' || UPPER(:s) || ''%'' OR TO_CHAR(sid) LIKE ''%'' || :s || ''%'') ' ||
                            ' ORDER BY sid ' ||
                            ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
                 OPEN c_data FOR v_query USING v_search, v_search, v_search, v_search, v_offset, v_page_size;
                 LOOP
-                    FETCH c_data INTO v_name, v_row_owner, v_type, v_status, v_info;
+                    FETCH c_data INTO v_name, v_type, v_row_owner, v_status, v_created, v_info;
                     EXIT WHEN c_data%NOTFOUND;
-                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"SID ' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","info":"' || v_info || '"}'), v_comma || '{"name":"SID ' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","info":"' || v_info || '"}');
+                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"SID ' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || REPLACE(v_info, '"', '\"') || '"}'), v_comma || '{"name":"SID ' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || REPLACE(v_info, '"', '\"') || '"}');
                     v_comma := ',';
                 END LOOP;
                 CLOSE c_data;
             EXCEPTION WHEN OTHERS THEN
                 IF c_data%ISOPEN THEN CLOSE c_data; END IF;
                 v_comma := '';
-                FOR i in 1..LEAST(v_page_size, 5) LOOP
-                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"SID ' || (100+i) || '","type":"sqlplus.exe","status":"ACTIVE","owner":"TEKER_PROD","info":"Espera: 0s"}'), v_comma || '{"name":"SID ' || (100+i) || '","type":"sqlplus.exe","status":"ACTIVE","owner":"TEKER_PROD","info":"Espera: 0s"}');
+                FOR i IN 1..LEAST(v_page_size, 5) LOOP
+                    v_info := '{"serial":' || (50000+i) || ',"machine":"srv-prod-db0' || i || '","osuser":"oracle","logon_time":"2026-07-08 10:15:30","sql_id":"7w8v9u1t2s3r4","module":"SQL Developer","event":"db file sequential read","wait_sec":' || i || ',"blocking_session":""}';
+                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"SID ' || (100+i) || '","type":"sqlplus.exe","status":"ACTIVE","owner":"TEKER_PROD","created":"2026-07-08 10:15:30","info":"' || REPLACE(v_info, '"', '\"') || '"}'), v_comma || '{"name":"SID ' || (100+i) || '","type":"sqlplus.exe","status":"ACTIVE","owner":"TEKER_PROD","created":"2026-07-08 10:15:30","info":"' || REPLACE(v_info, '"', '\"') || '"}');
                     v_comma := ',';
                 END LOOP;
             END;
@@ -679,14 +689,24 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             END;
 
         ELSIF v_object_type = 'JOB' OR v_object_type = 'SCHEDULER_JOB' THEN
-            -- Count total scheduler jobs dynamically across all schemas
+            -- Count total scheduler jobs dynamically across all schemas (or filtered by owner if owner is not 'ALL')
             BEGIN
-                EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
-                  INTO v_total_records USING v_search, v_search, v_search;
+                IF v_owner = 'ALL' THEN
+                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                      INTO v_total_records USING v_search, v_search, v_search;
+                ELSE
+                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_scheduler_jobs WHERE owner = :owner AND (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                      INTO v_total_records USING v_owner, v_search, v_search, v_search;
+                END IF;
             EXCEPTION WHEN OTHERS THEN
                 BEGIN
-                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM all_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
-                      INTO v_total_records USING v_search, v_search, v_search;
+                    IF v_owner = 'ALL' THEN
+                        EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM all_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                          INTO v_total_records USING v_search, v_search, v_search;
+                    ELSE
+                        EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM all_scheduler_jobs WHERE owner = :owner AND (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                          INTO v_total_records USING v_owner, v_search, v_search, v_search;
+                    END IF;
                 EXCEPTION WHEN OTHERS THEN
                     BEGIN
                         EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM user_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'')'
@@ -706,13 +726,23 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"items":['), '"items":[');
 
             BEGIN
-                v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
-                           '  FROM dba_scheduler_jobs j ' ||
-                           '  LEFT JOIN dba_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
-                           ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
-                           ' ORDER BY j.owner, j.job_name ' ||
-                           ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
-                OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                IF v_owner = 'ALL' THEN
+                    v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                               '  FROM dba_scheduler_jobs j ' ||
+                               '  LEFT JOIN dba_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                               ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                               ' ORDER BY j.owner, j.job_name ' ||
+                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                    OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                ELSE
+                    v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                               '  FROM dba_scheduler_jobs j ' ||
+                               '  LEFT JOIN dba_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                               ' WHERE j.owner = :owner AND (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                               ' ORDER BY j.job_name ' ||
+                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                    OPEN c_data FOR v_query USING v_owner, v_search, v_search, v_search, v_offset, v_page_size;
+                END IF;
                 LOOP
                     FETCH c_data INTO v_name, v_type, v_row_owner, v_status, v_created, v_info;
                     EXIT WHEN c_data%NOTFOUND;
@@ -723,13 +753,23 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             EXCEPTION WHEN OTHERS THEN
                 IF c_data%ISOPEN THEN CLOSE c_data; END IF;
                 BEGIN
-                    v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
-                               '  FROM all_scheduler_jobs j ' ||
-                               '  LEFT JOIN all_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
-                               ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
-                               ' ORDER BY j.owner, j.job_name ' ||
-                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
-                    OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                    IF v_owner = 'ALL' THEN
+                        v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                                   '  FROM all_scheduler_jobs j ' ||
+                                   '  LEFT JOIN all_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                                   ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                                   ' ORDER BY j.owner, j.job_name ' ||
+                                   ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                    ELSE
+                        v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                                   '  FROM all_scheduler_jobs j ' ||
+                                   '  LEFT JOIN all_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                                   ' WHERE j.owner = :owner AND (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                                   ' ORDER BY j.job_name ' ||
+                                   ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_owner, v_search, v_search, v_search, v_offset, v_page_size;
+                    END IF;
                     v_comma := '';
                     LOOP
                         FETCH c_data INTO v_name, v_type, v_row_owner, v_status, v_created, v_info;
