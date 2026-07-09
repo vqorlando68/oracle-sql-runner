@@ -15,6 +15,7 @@ interface ObjectsListModalProps {
   objectType: string;
   schema: string;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
+  onDocRequest?: () => void;
 }
 
 // Map types to descriptive titles
@@ -268,7 +269,8 @@ export default function ObjectsListModal({
   connection,
   objectType,
   schema,
-  showToast
+  showToast,
+  onDocRequest,
 }: ObjectsListModalProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -287,6 +289,20 @@ export default function ObjectsListModal({
       [sid]: !prev[sid]
     }));
   };
+
+  // Ctrl+Alt+D → trigger documentation modal in parent
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        e.stopPropagation();
+        onDocRequest?.();
+      }
+    };
+    window.addEventListener('keydown', handleKey, true);
+    return () => window.removeEventListener('keydown', handleKey, true);
+  }, [isOpen, onDocRequest]);
 
   const fetchObjects = async (page: number, query: string) => {
     if (!isOpen || !objectType) return;

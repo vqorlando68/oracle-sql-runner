@@ -1200,6 +1200,26 @@ const DEMO_LOCKS_DATA = {
   ]
 };
 
+// Human-readable title for Oracle object types (used in the doc modal context badge)
+const getTitleForObjectType = (type: string): string => {
+  const t = (type || '').toUpperCase();
+  if (t === 'SESSION')      return 'Sesiones';
+  if (t === 'USER')         return 'Usuarios';
+  if (t === 'INVALID')      return 'Objetos Inválidos';
+  if (t === 'TABLE')        return 'Tablas';
+  if (t === 'INDEX')        return 'Índices';
+  if (t === 'VIEW')         return 'Vistas';
+  if (t === 'TRIGGER')      return 'Triggers';
+  if (t === 'PACKAGE')      return 'Packages';
+  if (t === 'PACKAGE BODY') return 'Package Bodies';
+  if (t === 'SEQUENCE')     return 'Secuencias';
+  if (t === 'LOB')          return 'LOBs';
+  if (t === 'FUNCTION')     return 'Funciones';
+  if (t === 'PROCEDURE')    return 'Procedimientos';
+  if (t === 'JOB')          return 'Scheduler Jobs';
+  return `Objetos (${type})`;
+};
+
 export default function DbMonitor({
   isOpen,
   onClose,
@@ -1219,6 +1239,8 @@ export default function DbMonitor({
   const [showSqlScript, setShowSqlScript] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [generationTime, setGenerationTime] = useState<string>('');
+  const [isDocModalOpen, setIsDocModalOpen] = useState(false);
+  const [copiedDocExample, setCopiedDocExample] = useState(false);
 
   // Healthcheck detail modal states
   const [isHealthcheckModalOpen, setIsHealthcheckModalOpen] = useState(false);
@@ -1397,6 +1419,303 @@ END;
     }
   }, [isHealthcheckModalOpen, selectedAlert]);
 
+  // ─── Ctrl+Alt+D: Open documentation modal ───────────────────────────────────
+  // docContext tracks what is currently in focus: the main tab, the objects modal, or the healthcheck modal
+  const [docContext, setDocContext] = useState<'tab' | 'objects_modal' | 'healthcheck'>('tab');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleDocKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDocModalOpen(prev => !prev);
+      }
+      if (e.key === 'Escape') {
+        setIsDocModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleDocKey, true);
+    return () => window.removeEventListener('keydown', handleDocKey, true);
+  }, [isOpen]);
+
+  // ─── Documentation data per tab ──────────────────────────────────────────────
+  const TAB_DOCS: Record<string, {
+    title: string;
+    package: string;
+    signature: string;
+    description: string;
+    returns: string;
+    inputs: { name: string; type: string; description: string }[];
+    outputFields: { key: string; type: string; description: string }[];
+    example: string;
+  }> = {
+    general: {
+      title: 'fn_dba_database_info_json',
+      package: 'pkgln_estadisticas_bd',
+      signature: 'FUNCTION fn_dba_database_info_json RETURN CLOB',
+      description:
+        'Recopila y devuelve en formato JSON un informe completo del estado general de la base de datos Oracle. ' +
+        'Consulta vistas del diccionario de datos (v$database, v$instance, v$version, dba_segments, dba_data_files, ' +
+        'dba_scheduler_jobs, v$session, v$parameter, dba_registry) para construir métricas de rendimiento, almacenamiento, ' +
+        'instancia y parámetros clave. Si alguna consulta falla por permisos insuficientes, retorna valores de demostración ' +
+        'para garantizar disponibilidad continua.',
+      returns: 'CLOB — Cadena JSON con la información general de la base de datos Oracle.',
+      inputs: [],
+      outputFields: [
+        { key: 'database.name',           type: 'STRING',  description: 'Nombre de la base de datos' },
+        { key: 'database.dbid',           type: 'NUMBER',  description: 'Identificador único DBID' },
+        { key: 'database.db_unique_name', type: 'STRING',  description: 'Nombre único de la BD (Data Guard)' },
+        { key: 'database.database_role',  type: 'STRING',  description: 'Rol: PRIMARY / STANDBY' },
+        { key: 'database.open_mode',      type: 'STRING',  description: 'Modo de apertura: READ WRITE / READ ONLY' },
+        { key: 'database.log_mode',       type: 'STRING',  description: 'Modo de log: ARCHIVELOG / NOARCHIVELOG' },
+        { key: 'database.platform',       type: 'STRING',  description: 'Plataforma del sistema operativo' },
+        { key: 'database.created',        type: 'DATE',    description: 'Fecha de creación de la base de datos' },
+        { key: 'instance.instance_name',  type: 'STRING',  description: 'Nombre de la instancia Oracle' },
+        { key: 'instance.host_name',      type: 'STRING',  description: 'Nombre del servidor / host' },
+        { key: 'instance.version',        type: 'STRING',  description: 'Versión de Oracle Database' },
+        { key: 'instance.startup_time',   type: 'DATETIME',description: 'Fecha y hora del último arranque' },
+        { key: 'instance.status',         type: 'STRING',  description: 'Estado de la instancia: OPEN / MOUNTED' },
+        { key: 'banner',                  type: 'STRING',  description: 'Cadena completa de versión de Oracle' },
+        { key: 'top_schemas[]',           type: 'ARRAY',   description: 'Top 5 esquemas por tamaño (username, gb)' },
+        { key: 'storage.data_files_gb',   type: 'NUMBER',  description: 'Total de archivos de datos en GB' },
+        { key: 'storage.temp_files_gb',   type: 'NUMBER',  description: 'Total de archivos temporales en GB' },
+        { key: 'top_tablespaces[]',       type: 'ARRAY',   description: 'Top 5 tablespaces por tamaño (tablespace, gb)' },
+        { key: 'object_summary',          type: 'OBJECT',  description: 'Contadores: tables, indexes, scheduler_jobs, invalid_objects, active_sessions, users' },
+        { key: 'top_segments[]',          type: 'ARRAY',   description: 'Top 10 segmentos más grandes (owner, segment_name, segment_type, mb)' },
+        { key: 'key_parameters',          type: 'OBJECT',  description: 'Parámetros clave: processes, sessions, cpu_count, sga_target, db_block_size, open_cursors, pga_aggregate_target' },
+        { key: 'components[]',            type: 'ARRAY',   description: 'Componentes instalados de la BD (name, status, version)' },
+      ],
+      example:
+`-- Ejecutar desde la hoja de trabajo SQL (requiere el paquete instalado)
+SELECT pkgln_estadisticas_bd.fn_dba_database_info_json() AS JSON_DATA
+  FROM DUAL;
+
+-- También se puede usar con JSON_TABLE para parsear los campos:
+SELECT j.*
+  FROM DUAL,
+       JSON_TABLE(
+         pkgln_estadisticas_bd.fn_dba_database_info_json(),
+         '$'
+         COLUMNS (
+           db_name     VARCHAR2(100) PATH '$.database.name',
+           version     VARCHAR2(100) PATH '$.instance.version',
+           host_name   VARCHAR2(200) PATH '$.instance.host_name',
+           open_mode   VARCHAR2(50)  PATH '$.database.open_mode'
+         )
+       ) j;`,
+    },
+    schema: {
+      title: 'fn_dba_schema_info_json',
+      package: 'pkgln_estadisticas_bd',
+      signature: 'FUNCTION fn_dba_schema_info_json RETURN CLOB',
+      description:
+        'Genera un informe JSON del estado del esquema actual del usuario conectado (SYS_CONTEXT CURRENT_SCHEMA). ' +
+        'Recopila el inventario de objetos (tablas, índices, vistas, paquetes, procedimientos, funciones, triggers), ' +
+        'sesiones activas, objetos bloqueados y realiza un diagnóstico de salud (healthcheck) detectando: objetos inválidos, ' +
+        'tablas sin estadísticas y tablespaces con poco espacio libre. ' +
+        'Compatible con dba_* y user_* views según los permisos del usuario conectado.',
+      returns: 'CLOB — Cadena JSON con el inventario y estado de salud del esquema actual.',
+      inputs: [],
+      outputFields: [
+        { key: 'owner',                      type: 'STRING',  description: 'Nombre del esquema analizado (usuario conectado)' },
+        { key: 'summary.size_gb',            type: 'NUMBER',  description: 'Tamaño total del esquema en GB' },
+        { key: 'summary.tables',             type: 'NUMBER',  description: 'Cantidad de tablas' },
+        { key: 'summary.indexes',            type: 'NUMBER',  description: 'Cantidad de índices' },
+        { key: 'summary.views',              type: 'NUMBER',  description: 'Cantidad de vistas' },
+        { key: 'summary.packages',           type: 'NUMBER',  description: 'Cantidad de paquetes (spec)' },
+        { key: 'summary.procedures',         type: 'NUMBER',  description: 'Cantidad de procedimientos standalone' },
+        { key: 'summary.functions',          type: 'NUMBER',  description: 'Cantidad de funciones standalone' },
+        { key: 'summary.triggers',           type: 'NUMBER',  description: 'Cantidad de triggers' },
+        { key: 'summary.invalid_objects',    type: 'NUMBER',  description: 'Cantidad de objetos con estado INVALID' },
+        { key: 'sessions',                   type: 'NUMBER',  description: 'Sesiones activas del esquema en v$session' },
+        { key: 'locked_objects',             type: 'NUMBER',  description: 'Objetos con bloqueo activo (v$locked_object)' },
+        { key: 'healthcheck[]',              type: 'ARRAY',   description: 'Lista de alertas de salud (severity: HIGH/MEDIUM, message)' },
+        { key: 'object_inventory[]',         type: 'ARRAY',   description: 'Inventario completo de objetos agrupado por tipo (object_type, count)' },
+      ],
+      example:
+`-- Ejecutar desde la hoja de trabajo SQL (requiere el paquete instalado)
+SELECT pkgln_estadisticas_bd.fn_dba_schema_info_json() AS JSON_DATA
+  FROM DUAL;
+
+-- Ejemplo: extraer solo el resumen del healthcheck
+SELECT severity, message
+  FROM DUAL,
+       JSON_TABLE(
+         pkgln_estadisticas_bd.fn_dba_schema_info_json(),
+         '$.healthcheck[*]'
+         COLUMNS (
+           severity VARCHAR2(20) PATH '$.severity',
+           message  VARCHAR2(500) PATH '$.message'
+         )
+       );`,
+    },
+    locks: {
+      title: 'f_bloqueos_transacciones',
+      package: 'pkgln_estadisticas_bd',
+      signature: 'FUNCTION f_bloqueos_transacciones RETURN CLOB',
+      description:
+        'Analiza el estado de bloqueos, transacciones activas y uso de segmentos de undo en la base de datos Oracle. ' +
+        'Identifica sesiones bloqueantes y bloqueadas, construye el árbol de bloqueos (blocking tree), ' +
+        'lista todos los locks activos con su modo y duración, y muestra el uso de bloques de undo por transacción. ' +
+        'Útil para diagnóstico de deadlocks, transacciones de larga duración y contención de recursos. ' +
+        'Requiere acceso a v$session, v$transaction, v$locked_object y dba_objects.',
+      returns: 'CLOB — Cadena JSON con el estado de bloqueos, transacciones y undo de la instancia Oracle.',
+      inputs: [],
+      outputFields: [
+        { key: 'summary.active_transactions',    type: 'NUMBER',  description: 'Número total de transacciones activas en v$transaction' },
+        { key: 'summary.locked_objects',         type: 'NUMBER',  description: 'Objetos con bloqueo activo (count distinct de v$locked_object)' },
+        { key: 'summary.blocking_sessions',      type: 'NUMBER',  description: 'Sesiones que están bloqueando a otras' },
+        { key: 'summary.blocked_sessions',       type: 'NUMBER',  description: 'Sesiones que están esperando un bloqueo' },
+        { key: 'summary.longest_transaction_sec',type: 'NUMBER',  description: 'Duración en segundos de la transacción más larga activa' },
+        { key: 'summary.total_undo_blocks',      type: 'NUMBER',  description: 'Total de bloques de undo usados por transacciones activas' },
+        { key: 'blocking_tree[]',                type: 'ARRAY',   description: 'Árbol de bloqueos: blocking_sid, blocking_user, blocked_sid, blocked_user, wait_time_sec, locked_object' },
+        { key: 'locks_list[]',                   type: 'ARRAY',   description: 'Lista de bloqueos activos: sid, username, object_name, object_type, lock_mode, lock_duration_sec, status' },
+        { key: 'undo_usage[]',                   type: 'ARRAY',   description: 'Uso de undo por sesión: username, sid, start_time, undo_blocks, status' },
+      ],
+      example:
+`-- Ejecutar desde la hoja de trabajo SQL (requiere el paquete instalado)
+SELECT pkgln_estadisticas_bd.f_bloqueos_transacciones() AS JSON_DATA
+  FROM DUAL;
+
+-- Ejemplo: ver el árbol de bloqueos activos
+SELECT blocking_sid, blocking_user, blocked_sid, blocked_user,
+       wait_time_sec, locked_object
+  FROM DUAL,
+       JSON_TABLE(
+         pkgln_estadisticas_bd.f_bloqueos_transacciones(),
+         '$.blocking_tree[*]'
+         COLUMNS (
+           blocking_sid  NUMBER        PATH '$.blocking_sid',
+           blocking_user VARCHAR2(50)  PATH '$.blocking_user',
+           blocked_sid   NUMBER        PATH '$.blocked_sid',
+           blocked_user  VARCHAR2(50)  PATH '$.blocked_user',
+           wait_time_sec NUMBER        PATH '$.wait_time_sec',
+           locked_object VARCHAR2(200) PATH '$.locked_object'
+         )
+       );`,
+    },
+
+    // ─── Objects List Modal (fn_get_objects_paginated_json) ────────────────────
+    objects_modal: {
+      title: 'fn_get_objects_paginated_json',
+      package: 'pkgln_estadisticas_bd',
+      signature: 'FUNCTION fn_get_objects_paginated_json(p_input_json IN CLOB) RETURN CLOB',
+      description:
+        'Devuelve una página de objetos de base de datos Oracle en formato JSON. Acepta un JSON de entrada ' +
+        'con filtros (tipo de objeto, esquema propietario, búsqueda de texto) y parámetros de paginación (página, tamaño de página). ' +
+        'Soporta los tipos: TABLE, INDEX, VIEW, TRIGGER, PACKAGE, PACKAGE BODY, SEQUENCE, LOB, FUNCTION, PROCEDURE, JOB, ' +
+        'SESSION (desde v$session), USER (desde dba_users) e INVALID (objetos con estado INVALID). ' +
+        'Si no tiene permisos sobre dba_*, intenta con user_* o all_* como fallback automático.',
+      returns: 'CLOB — JSON paginado con los objetos del tipo solicitado.',
+      inputs: [
+        { name: 'p_input_json', type: 'CLOB (JSON)', description: 'JSON con los parámetros de búsqueda y paginación' },
+      ],
+      outputFields: [
+        { key: 'total_records', type: 'NUMBER', description: 'Total de registros que coinciden con el filtro' },
+        { key: 'page',         type: 'NUMBER', description: 'Número de página actual (base 1)' },
+        { key: 'page_size',    type: 'NUMBER', description: 'Cantidad de registros por página' },
+        { key: 'total_pages',  type: 'NUMBER', description: 'Total de páginas disponibles' },
+        { key: 'items[]',      type: 'ARRAY',  description: 'Lista de objetos de la página actual' },
+        { key: 'items[].name',    type: 'STRING', description: 'Nombre del objeto (o "SID N" para sesiones)' },
+        { key: 'items[].type',    type: 'STRING', description: 'Tipo del objeto (TABLE, INDEX, SESSION, etc.)' },
+        { key: 'items[].status',  type: 'STRING', description: 'Estado: VALID, INVALID, ACTIVE, SCHEDULED, DISABLED, OPEN, LOCKED' },
+        { key: 'items[].owner',   type: 'STRING', description: 'Propietario / esquema del objeto' },
+        { key: 'items[].created', type: 'DATE',   description: 'Fecha de creación del objeto' },
+        { key: 'items[].info',    type: 'STRING', description: 'Detalle adicional: tabla asociada (INDEX), habilitado (JOB), JSON extendido (SESSION)' },
+      ],
+      example:
+`-- Formato del JSON de entrada (p_input_json):
+-- object_type : Tipo de objeto (TABLE, INDEX, VIEW, SESSION, USER, JOB, INVALID, etc.)
+-- owner       : Esquema propietario (usar 'ALL' para todos los esquemas en SESSION/JOB)
+-- search_query: Texto de búsqueda (NULL para sin filtro)
+-- page        : Número de página (base 1)
+-- page_size   : Registros por página
+
+-- Ejemplo: obtener la primera página de tablas del esquema TEKER_PROD
+SELECT pkgln_estadisticas_bd.fn_get_objects_paginated_json(
+  '{ "object_type": "TABLE",
+     "owner": "TEKER_PROD",
+     "search_query": null,
+     "page": 1,
+     "page_size": 10 }'
+) AS JSON_DATA
+  FROM DUAL;
+
+-- Ejemplo: buscar sesiones activas con "TEKER" en el nombre de usuario
+SELECT pkgln_estadisticas_bd.fn_get_objects_paginated_json(
+  '{ "object_type": "SESSION",
+     "owner": "ALL",
+     "search_query": "TEKER",
+     "page": 1,
+     "page_size": 25 }'
+) AS JSON_DATA
+  FROM DUAL;`,
+    },
+
+    // ─── Healthcheck Modal (alertas de salud del esquema) ──────────────────────
+    healthcheck: {
+      title: 'Alertas de Salud del Esquema (Healthcheck)',
+      package: 'pkgln_estadisticas_bd',
+      signature: 'FUNCTION fn_dba_schema_info_json RETURN CLOB  →  campo $.healthcheck[]',
+      description:
+        'Las alertas de salud son generadas por fn_dba_schema_info_json dentro del campo $.healthcheck[]. ' +
+        'Cada alerta tiene una gravedad (HIGH / MEDIUM / LOW) y un mensaje descriptivo del problema detectado. ' +
+        'Al hacer clic en una alerta, el monitor ejecuta una consulta adicional para obtener el detalle específico ' +
+        'y ofrece un script SQL de remediación listo para copiar y ejecutar en la hoja de trabajo.',
+      returns: 'CLOB (campo JSON $.healthcheck[]) — Lista de alertas con severity y message.',
+      inputs: [],
+      outputFields: [
+        { key: 'healthcheck[].severity', type: 'STRING', description: 'Gravedad: HIGH (rojo), MEDIUM (ámbar), LOW (azul)' },
+        { key: 'healthcheck[].message',  type: 'STRING', description: 'Descripción del problema detectado' },
+      ],
+      example:
+`-- Tipos de alerta detectados y sus consultas de detalle:
+
+-- 1. Objetos inválidos (severity: HIGH)
+--    El monitor ejecuta:
+SELECT object_type, object_name
+  FROM user_objects
+ WHERE status = 'INVALID'
+ ORDER BY object_type, object_name;
+--    Y genera un script ALTER ... COMPILE para recompilar cada objeto.
+
+-- 2. Tablas sin estadísticas (severity: MEDIUM)
+--    El monitor ejecuta:
+SELECT table_name FROM user_tables
+ WHERE last_analyzed IS NULL
+ ORDER BY table_name;
+--    Y genera un DECLARE...BEGIN con DBMS_STATS.GATHER_TABLE_STATS
+--    para cada tabla sin estadísticas.
+
+-- 3. Tablespaces con poco espacio libre (severity: MEDIUM)
+--    El monitor ejecuta:
+SELECT df.tablespace_name AS name,
+       ROUND(df.total_bytes / 1024 / 1024 / 1024, 3) AS total_gb,
+       ROUND(NVL(fs.free_bytes, 0) / 1024 / 1024 / 1024, 3) AS free_gb
+  FROM (SELECT tablespace_name, SUM(bytes) AS total_bytes
+          FROM dba_data_files GROUP BY tablespace_name) df
+  LEFT JOIN (SELECT tablespace_name, SUM(bytes) AS free_bytes
+               FROM dba_free_space GROUP BY tablespace_name) fs
+    ON df.tablespace_name = fs.tablespace_name
+ ORDER BY df.tablespace_name;`,
+    },
+  };
+
+  const currentDoc = TAB_DOCS[
+    docContext === 'objects_modal' ? 'objects_modal'
+    : docContext === 'healthcheck' ? 'healthcheck'
+    : activeTab
+  ];
+
+  const handleCopyDocExample = () => {
+    if (!currentDoc) return;
+    navigator.clipboard.writeText(currentDoc.example);
+    setCopiedDocExample(true);
+    showToast('Ejemplo SQL copiado al portapapeles', 'success');
+    setTimeout(() => setCopiedDocExample(false), 3000);
+  };
+
 
   const [isObjModalOpen, setIsObjModalOpen] = useState(false);
   const [selectedObjType, setSelectedObjType] = useState<string>('');
@@ -1404,7 +1723,9 @@ END;
   const handleOpenObjectsModal = (type: string) => {
     setSelectedObjType(type);
     setIsObjModalOpen(true);
+    setDocContext('objects_modal');
   };
+
 
   // Sync connection when modal opens or active connection changes
   useEffect(() => {
@@ -1537,6 +1858,7 @@ END;
   const maxSegmentMb = dbData?.top_segments ? Math.max(...dbData.top_segments.map((s: any) => s.mb), 1) : 1000;
 
   return (
+    <>
     <div className={`fixed inset-0 z-[600] flex flex-col backdrop-blur-xl ${
       isDark ? 'bg-slate-950/85 text-slate-100' : 'bg-slate-50/90 text-slate-800'
     } overflow-hidden font-sans transition-all duration-300`}>
@@ -1920,108 +2242,227 @@ END;
                   </div>
                 </div>
 
-                {/* Storage Summary Gauges */}
-                <div className={`p-6 rounded-2xl ${bgCard} flex flex-col items-center justify-between`}>
-                  <div className="w-full flex items-center gap-2 mb-2 shrink-0">
-                    <span className="w-1.5 h-4 rounded bg-teal-500" />
-                    <h4 className="text-xs uppercase font-extrabold tracking-wider opacity-85">Resumen de Almacenamiento</h4>
-                  </div>
+                {/* Storage Summary Gauges — Speedometer Style */}
+                {(() => {
+                  const bdGb    = dataFilesGb;
+                  const totalGb = dataFilesGb + tempFilesGb;
+                  const maxGb   = Math.max(totalGb * 1.2, 100);
 
-                  <div className="flex items-center justify-center gap-8 py-3 w-full">
-                    {/* Gauge 1: Datafiles */}
-                    <div className="flex flex-col items-center">
-                      <div className="relative w-36 h-20 flex items-end justify-center overflow-hidden">
-                        <svg className="absolute w-36 h-36 top-0 left-0" viewBox="0 0 100 100">
-                          <path 
-                            d="M 15 80 A 35 35 0 0 1 85 80" 
-                            fill="none" 
-                            stroke={isDark ? "rgba(71, 85, 105, 0.2)" : "rgba(203, 213, 225, 0.5)"} 
-                            strokeWidth="8"
-                            strokeLinecap="round"
-                          />
-                          <path 
-                            d="M 15 80 A 35 35 0 0 1 85 80" 
-                            fill="none" 
-                            stroke="url(#dataGaugeGrad)" 
-                            strokeWidth="8"
-                            strokeLinecap="round"
-                            strokeDasharray="110" 
-                            strokeDashoffset={110 - (Math.min(dataFilesGb, 100) / 100) * 110}
-                            className="transition-all duration-1000"
-                          />
+                  // Compute needle angle: -90° = left, 0° = top, 90° = right
+                  const angleBd    = ((bdGb    / maxGb) * 180) - 90;
+                  const angleTotal = ((totalGb / maxGb) * 180) - 90;
+                  const pctBd      = Math.min((bdGb    / maxGb) * 100, 100);
+
+                  // SVG arc helper (semicircle from 180° to 0°, left-to-right)
+                  const describeArc = (cx: number, cy: number, r: number, startDeg: number, endDeg: number) => {
+                    const toRad = (d: number) => (d * Math.PI) / 180;
+                    const sx = cx + r * Math.cos(toRad(startDeg));
+                    const sy = cy + r * Math.sin(toRad(startDeg));
+                    const ex = cx + r * Math.cos(toRad(endDeg));
+                    const ey = cy + r * Math.sin(toRad(endDeg));
+                    const large = endDeg - startDeg > 180 ? 1 : 0;
+                    return `M ${sx} ${sy} A ${r} ${r} 0 ${large} 1 ${ex} ${ey}`;
+                  };
+
+                  // Gauge constants
+                  const CX = 60, CY = 60, R = 44, SW = 10;
+                  const arcStart = 180, arcEnd = 360; // left → right semicircle
+
+                  // Filled arc end angle
+                  const fillEndBd    = arcStart + (Math.min(bdGb,    maxGb) / maxGb) * 180;
+                  const fillEndTotal = arcStart + (Math.min(totalGb, maxGb) / maxGb) * 180;
+
+                  const cardBg = isDark
+                    ? 'bg-slate-800/80 border border-slate-700/60'
+                    : 'bg-sky-50/80 border border-sky-200/70';
+
+                  interface GaugeProps {
+                    value: number;
+                    maxVal: number;
+                    fillEnd: number;
+                    angle: number;
+                    arcColor: string;
+                    gradId: string;
+                    gradStops: { offset: string; color: string }[];
+                    label: string;
+                    showBar?: boolean;
+                    barPct?: number;
+                  }
+
+                  const Gauge = ({ value, fillEnd, angle, arcColor, gradId, gradStops, label, showBar, barPct }: GaugeProps) => (
+                    <div className="flex-1 flex flex-col items-center gap-2.5 min-w-0">
+                      {/* SVG Speedometer — tight viewBox and responsive sizing */}
+                      <div className="w-full" style={{ aspectRatio: '112 / 63' }}>
+                        <svg
+                          width="100%"
+                          height="100%"
+                          viewBox="4 2 112 63"
+                          preserveAspectRatio="xMidYMid meet"
+                          overflow="visible"
+                        >
                           <defs>
-                            <linearGradient id="dataGaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                              <stop offset="0%" stopColor="#10b981" />
-                              <stop offset="60%" stopColor="#f59e0b" />
-                              <stop offset="100%" stopColor="#ef4444" />
+                            <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
+                              {gradStops.map((s, i) => (
+                                <stop key={i} offset={s.offset} stopColor={s.color} />
+                              ))}
                             </linearGradient>
+                            <filter id={`shadow-${gradId}`} x="-20%" y="-20%" width="140%" height="140%">
+                              <feDropShadow dx="0" dy="1" stdDeviation="1" floodOpacity="0.25" />
+                            </filter>
                           </defs>
+
+                          {/* Track arc (background) */}
+                          <path
+                            d={describeArc(CX, CY, R, arcStart, arcEnd)}
+                            fill="none"
+                            stroke={isDark ? 'rgba(100,116,139,0.25)' : 'rgba(203,213,225,0.9)'}
+                            strokeWidth={SW}
+                            strokeLinecap="round"
+                          />
+
+                          {/* Filled arc */}
+                          <path
+                            d={describeArc(CX, CY, R, arcStart, fillEnd)}
+                            fill="none"
+                            stroke={`url(#${gradId})`}
+                            strokeWidth={SW}
+                            strokeLinecap="round"
+                          />
+
+                          {/* Tick marks */}
+                          {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
+                            const tickAngle = (180 + t * 180) * (Math.PI / 180);
+                            const r1 = R + SW / 2 + 3;
+                            const r2 = R + SW / 2 + 7;
+                            return (
+                              <line
+                                key={i}
+                                x1={CX + r1 * Math.cos(tickAngle)}
+                                y1={CY + r1 * Math.sin(tickAngle)}
+                                x2={CX + r2 * Math.cos(tickAngle)}
+                                y2={CY + r2 * Math.sin(tickAngle)}
+                                stroke={isDark ? 'rgba(148,163,184,0.4)' : 'rgba(100,116,139,0.35)'}
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                              />
+                            );
+                          })}
+
+                          {/* Needle */}
+                          {(() => {
+                            const actualAngle = ((arcStart + (Math.min(value, maxGb) / maxGb) * 180)) * (Math.PI / 180);
+                            const nx = CX + (R - 4) * Math.cos(actualAngle);
+                            const ny = CY + (R - 4) * Math.sin(actualAngle);
+                            const perp = actualAngle + Math.PI / 2;
+                            const bw = 3.5;
+                            const b1x = CX + bw * Math.cos(perp);
+                            const b1y = CY + bw * Math.sin(perp);
+                            const b2x = CX - bw * Math.cos(perp);
+                            const b2y = CY - bw * Math.sin(perp);
+                            return (
+                              <>
+                                <polygon
+                                  points={`${nx},${ny} ${b1x},${b1y} ${b2x},${b2y}`}
+                                  fill={isDark ? '#cbd5e1' : '#475569'}
+                                  filter={`url(#shadow-${gradId})`}
+                                />
+                                <circle cx={CX} cy={CY} r={5} fill={isDark ? '#94a3b8' : '#64748b'} />
+                                <circle cx={CX} cy={CY} r={2.5} fill={isDark ? '#1e293b' : '#f8fafc'} />
+                              </>
+                            );
+                          })()}
+
+                          {/* Value text */}
+                          <text
+                            x={CX} y={CY - 6}
+                            textAnchor="middle" fontSize="11" fontWeight="900"
+                            fontFamily="ui-monospace, monospace"
+                            fill={isDark ? '#f1f5f9' : '#1e293b'}
+                          >
+                            {value.toFixed(2)}
+                          </text>
+                          <text
+                            x={CX} y={CY + 3}
+                            textAnchor="middle" fontSize="6" fontWeight="700"
+                            fontFamily="sans-serif"
+                            fill={isDark ? '#94a3b8' : '#64748b'}
+                            letterSpacing="0.05em"
+                          >
+                            GB
+                          </text>
                         </svg>
-                        <div 
-                          className="absolute bottom-0 w-1.5 h-12 bg-slate-400 dark:bg-slate-200 rounded-full transition-transform duration-1000"
-                          style={{ 
-                            transformOrigin: '50% 100%',
-                            transform: `rotate(${(Math.min(dataFilesGb, 100) / 100) * 180 - 90}deg)`
-                          }}
-                        />
-                        <div className="absolute bottom-1 flex flex-col items-center">
-                          <span className="text-xl font-black tracking-tight leading-none text-slate-800 dark:text-slate-100">
-                            {dataFilesGb.toFixed(2)}
-                          </span>
-                        </div>
                       </div>
-                      <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 mt-2 text-center leading-tight">
-                        Archivos de Datos (GB)
+
+                      {/* Progress bar (only for BD gauge) */}
+                      {showBar && (
+                        <div className={`w-full h-2.5 rounded-full overflow-hidden border ${
+                          isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-200 border-slate-300'
+                        }`}>
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-1000"
+                            style={{ width: `${barPct}%` }}
+                          />
+                        </div>
+                      )}
+                      {!showBar && <div className="h-2.5" />}
+
+                      {/* Label */}
+                      <span className={`text-[11px] font-black tracking-wide text-center leading-tight ${
+                        isDark ? 'text-slate-300' : 'text-slate-600'
+                      }`}>
+                        {label}
                       </span>
                     </div>
+                  );
 
-                    {/* Gauge 2: Tempfiles */}
-                    <div className="flex flex-col items-center">
-                      <div className="relative w-36 h-20 flex items-end justify-center overflow-hidden">
-                        <svg className="absolute w-36 h-36 top-0 left-0" viewBox="0 0 100 100">
-                          <path 
-                            d="M 15 80 A 35 35 0 0 1 85 80" 
-                            fill="none" 
-                            stroke={isDark ? "rgba(71, 85, 105, 0.2)" : "rgba(203, 213, 225, 0.5)"} 
-                            strokeWidth="8"
-                            strokeLinecap="round"
-                          />
-                          <path 
-                            d="M 15 80 A 35 35 0 0 1 85 80" 
-                            fill="none" 
-                            stroke="url(#tempGaugeGrad)" 
-                            strokeWidth="8"
-                            strokeLinecap="round"
-                            strokeDasharray="110"
-                            strokeDashoffset={110 - (Math.min(tempFilesGb, 50) / 50) * 110}
-                            className="transition-all duration-1000"
-                          />
-                          <defs>
-                            <linearGradient id="tempGaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                              <stop offset="0%" stopColor="#10b981" />
-                              <stop offset="100%" stopColor="#3b82f6" />
-                            </linearGradient>
-                          </defs>
-                        </svg>
-                        <div 
-                          className="absolute bottom-0 w-1.5 h-12 bg-slate-400 dark:bg-slate-200 rounded-full transition-transform duration-1000"
-                          style={{ 
-                            transformOrigin: '50% 100%',
-                            transform: `rotate(${(Math.min(tempFilesGb, 50) / 50) * 180 - 90}deg)`
-                          }}
-                        />
-                        <div className="absolute bottom-1 flex flex-col items-center">
-                          <span className="text-xl font-black tracking-tight leading-none text-slate-800 dark:text-slate-100">
-                            {tempFilesGb.toFixed(2)}
-                          </span>
-                        </div>
+
+                  return (
+                    <div className={`p-5 rounded-2xl ${cardBg} flex flex-col items-center gap-4`}>
+                      {/* Title */}
+                      <div className="w-full flex items-center gap-2">
+                        <span className="w-1.5 h-4 rounded bg-teal-500 shrink-0" />
+                        <h4 className="text-xs uppercase font-extrabold tracking-wider opacity-85">
+                          Uso de Espacio Total
+                        </h4>
                       </div>
-                      <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 dark:text-slate-500 mt-2 text-center leading-tight">
-                        Archivos Temporales (GB)
-                      </span>
+
+                      {/* Two gauges side by side — each takes 50% */}
+                      <div className="flex items-start justify-center gap-4 w-full">
+                        <Gauge
+                          value={bdGb}
+                          maxVal={maxGb}
+                          fillEnd={fillEndBd}
+                          angle={angleBd}
+                          gradId="storageBdGrad"
+                          arcColor="#f97316"
+                          gradStops={[
+                            { offset: '0%',   color: '#f59e0b' },
+                            { offset: '60%',  color: '#f97316' },
+                            { offset: '100%', color: '#ea580c' },
+                          ]}
+                          label={`Tamaño BD: ${bdGb.toFixed(2)} GB`}
+                          showBar={true}
+                          barPct={pctBd}
+                        />
+                        <Gauge
+                          value={totalGb}
+                          maxVal={maxGb}
+                          fillEnd={fillEndTotal}
+                          angle={angleTotal}
+                          gradId="storageTotalGrad"
+                          arcColor="#22c55e"
+                          gradStops={[
+                            { offset: '0%',   color: '#4ade80' },
+                            { offset: '60%',  color: '#22c55e' },
+                            { offset: '100%', color: '#16a34a' },
+                          ]}
+                          label={`Tamaño Total: ${totalGb.toFixed(2)} GB`}
+                          showBar={false}
+                        />
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Top 5 Tablespaces */}
                 <div className={`p-6 rounded-2xl ${bgCard} flex flex-col`}>
@@ -2386,6 +2827,7 @@ END;
                           onClick={() => {
                             setSelectedAlert(alert);
                             setIsHealthcheckModalOpen(true);
+                            setDocContext('healthcheck');
                           }}
                           className={`p-3.5 rounded-xl border flex items-center gap-3 cursor-pointer hover:scale-[1.02] hover:border-amber-500/40 hover:shadow-lg transition-all ${cardStyle}`}
                         >
@@ -2751,13 +3193,15 @@ END;
       {/* Paginated Objects List Modal */}
       <ObjectsListModal
         isOpen={isObjModalOpen}
-        onClose={() => setIsObjModalOpen(false)}
+        onClose={() => { setIsObjModalOpen(false); setDocContext('tab'); }}
         isDark={isDark}
         connection={selectedConnection}
         objectType={selectedObjType}
         schema={activeTab === 'general' ? 'ALL' : (dbData?.owner || 'TEKER_PROD')}
         showToast={showToast}
+        onDocRequest={() => setIsDocModalOpen(prev => !prev)}
       />
+
 
       {/* Healthcheck Detail Modal */}
       {isHealthcheckModalOpen && selectedAlert && (() => {
@@ -3007,7 +3451,7 @@ END;
               {/* Footer */}
               <footer className={`px-6 py-4 border-t flex justify-end ${modalFooterBg}`}>
                 <button
-                  onClick={() => setIsHealthcheckModalOpen(false)}
+                  onClick={() => { setIsHealthcheckModalOpen(false); setDocContext('tab'); }}
                   className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${modalCloseBtn}`}
                 >
                   Cerrar Ventana
@@ -3019,5 +3463,231 @@ END;
         );
       })()}
     </div>
+
+      {/* ─── DOCUMENTATION MODAL (Ctrl+Alt+D) ─── */}
+      {isDocModalOpen && currentDoc && (
+        <div
+          className="fixed inset-0 z-[700] flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setIsDocModalOpen(false); }}
+        >
+          {/* Backdrop */}
+          <div className={`absolute inset-0 backdrop-blur-sm ${
+            isDark ? 'bg-slate-950/75' : 'bg-slate-900/40'
+          }`} />
+
+          {/* Modal Panel */}
+          <div className={`relative z-10 w-full max-w-3xl max-h-[88vh] flex flex-col rounded-2xl shadow-2xl border overflow-hidden ${
+            isDark
+              ? 'bg-slate-900 border-slate-700/80 text-slate-100'
+              : 'bg-white border-slate-200 text-slate-800'
+          }`}>
+
+            {/* ── Header ── */}
+            <div className={`px-6 py-4 flex items-start justify-between gap-4 border-b shrink-0 ${
+              isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 shrink-0">
+                  <HelpCircle className="w-5 h-5 text-blue-400" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[10px] font-extrabold tracking-widest uppercase px-2 py-0.5 rounded-full border ${
+                      isDark ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-600'
+                    }`}>
+                      {currentDoc.package}
+                    </span>
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${
+                      docContext === 'objects_modal'
+                        ? (isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-600')
+                        : docContext === 'healthcheck'
+                        ? (isDark ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-rose-50 border-rose-200 text-rose-600')
+                        : activeTab === 'general'
+                        ? (isDark ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' : 'bg-indigo-50 border-indigo-200 text-indigo-600')
+                        : activeTab === 'schema'
+                        ? (isDark ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-600')
+                        : (isDark ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-rose-50 border-rose-200 text-rose-600')
+                    }`}>
+                      {docContext === 'objects_modal' ? `Modal: ${getTitleForObjectType(selectedObjType)}`
+                        : docContext === 'healthcheck' ? 'Modal: Alerta Healthcheck'
+                        : activeTab === 'general' ? 'Tab: Dashboard General'
+                        : activeTab === 'schema' ? 'Tab: Objetos del Esquema'
+                        : 'Tab: Bloqueos y Transacciones'}
+                    </span>
+                    <span className={`text-[10px] opacity-50`}>Ctrl+Alt+D para cerrar</span>
+                  </div>
+                  <h2 className="text-base font-black tracking-tight font-mono mt-1 truncate">
+                    {currentDoc.title}{docContext !== 'healthcheck' ? '()' : ''}
+                  </h2>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsDocModalOpen(false)}
+                className={`p-1.5 rounded-lg transition-colors shrink-0 ${
+                  isDark ? 'hover:bg-slate-800 text-slate-400 hover:text-white' : 'hover:bg-slate-100 text-slate-500 hover:text-black'
+                }`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* ── Body (scrollable) ── */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-5 space-y-6">
+
+              {/* Signature */}
+              <div>
+                <div className={`text-[10px] uppercase font-black tracking-widest mb-1.5 ${
+                  isDark ? 'text-slate-500' : 'text-slate-400'
+                }`}>Firma de la Función</div>
+                <pre className={`font-mono text-xs px-4 py-3 rounded-xl border ${
+                  isDark ? 'bg-slate-950 border-slate-800 text-amber-400' : 'bg-slate-50 border-slate-200 text-amber-700'
+                }`}>
+                  {currentDoc.signature}
+                </pre>
+              </div>
+
+              {/* Description */}
+              <div>
+                <div className={`text-[10px] uppercase font-black tracking-widest mb-1.5 ${
+                  isDark ? 'text-slate-500' : 'text-slate-400'
+                }`}>Descripción</div>
+                <p className={`text-sm leading-relaxed ${
+                  isDark ? 'text-slate-300' : 'text-slate-600'
+                }`}>{currentDoc.description}</p>
+              </div>
+
+              {/* Returns */}
+              <div>
+                <div className={`text-[10px] uppercase font-black tracking-widest mb-1.5 ${
+                  isDark ? 'text-slate-500' : 'text-slate-400'
+                }`}>Valor de Retorno</div>
+                <div className={`flex items-start gap-2 px-4 py-3 rounded-xl border ${
+                  isDark ? 'bg-blue-950/30 border-blue-900/50 text-blue-300' : 'bg-blue-50 border-blue-100 text-blue-800'
+                }`}>
+                  <Terminal className="w-4 h-4 shrink-0 mt-0.5 opacity-70" />
+                  <p className="text-sm font-medium">{currentDoc.returns}</p>
+                </div>
+              </div>
+
+              {/* Inputs (only if any) */}
+              {currentDoc.inputs.length > 0 && (
+                <div>
+                  <div className={`text-[10px] uppercase font-black tracking-widest mb-1.5 ${
+                    isDark ? 'text-slate-500' : 'text-slate-400'
+                  }`}>Parámetros de Entrada</div>
+                  <div className={`rounded-xl border overflow-hidden ${
+                    isDark ? 'border-slate-800' : 'border-slate-200'
+                  }`}>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className={isDark ? 'bg-slate-800/60 text-slate-400' : 'bg-slate-100 text-slate-500'}>
+                          <th className="text-left px-4 py-2 font-bold uppercase text-[10px] tracking-wider">Parámetro</th>
+                          <th className="text-left px-4 py-2 font-bold uppercase text-[10px] tracking-wider">Tipo</th>
+                          <th className="text-left px-4 py-2 font-bold uppercase text-[10px] tracking-wider">Descripción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentDoc.inputs.map((inp, i) => (
+                          <tr key={i} className={isDark ? 'border-t border-slate-800 hover:bg-slate-800/40' : 'border-t border-slate-100 hover:bg-slate-50'}>
+                            <td className="px-4 py-2 font-mono font-bold text-amber-400">{inp.name}</td>
+                            <td className="px-4 py-2 font-mono text-blue-400">{inp.type}</td>
+                            <td className={`px-4 py-2 ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{inp.description}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Output Structure */}
+              <div>
+                <div className={`text-[10px] uppercase font-black tracking-widest mb-1.5 ${
+                  isDark ? 'text-slate-500' : 'text-slate-400'
+                }`}>Estructura del JSON Retornado</div>
+                <div className={`rounded-xl border overflow-hidden ${
+                  isDark ? 'border-slate-800' : 'border-slate-200'
+                }`}>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className={isDark ? 'bg-slate-800/60 text-slate-400' : 'bg-slate-100 text-slate-500'}>
+                        <th className="text-left px-4 py-2.5 font-bold uppercase text-[10px] tracking-wider">Campo JSON</th>
+                        <th className="text-left px-4 py-2.5 font-bold uppercase text-[10px] tracking-wider">Tipo</th>
+                        <th className="text-left px-4 py-2.5 font-bold uppercase text-[10px] tracking-wider">Descripción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentDoc.outputFields.map((field, i) => (
+                        <tr key={i} className={isDark ? 'border-t border-slate-800/80 hover:bg-slate-800/40' : 'border-t border-slate-100 hover:bg-slate-50'}>
+                          <td className="px-4 py-2 font-mono font-bold text-emerald-400 text-[11px]">{field.key}</td>
+                          <td className="px-4 py-2">
+                            <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                              field.type === 'ARRAY'  ? (isDark ? 'bg-purple-900/40 text-purple-300 border border-purple-800/50' : 'bg-purple-50 text-purple-700 border border-purple-200') :
+                              field.type === 'OBJECT' ? (isDark ? 'bg-blue-900/40 text-blue-300 border border-blue-800/50' : 'bg-blue-50 text-blue-700 border border-blue-200') :
+                              field.type === 'NUMBER' ? (isDark ? 'bg-amber-900/30 text-amber-300 border border-amber-800/40' : 'bg-amber-50 text-amber-700 border border-amber-200') :
+                                                        (isDark ? 'bg-slate-800 text-slate-300 border border-slate-700' : 'bg-slate-100 text-slate-600 border border-slate-200')
+                            }`}>
+                              {field.type}
+                            </span>
+                          </td>
+                          <td className={`px-4 py-2 ${ isDark ? 'text-slate-300' : 'text-slate-600'}`}>{field.description}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Usage Example */}
+              <div>
+                <div className={`flex items-center justify-between mb-1.5`}>
+                  <div className={`text-[10px] uppercase font-black tracking-widest ${
+                    isDark ? 'text-slate-500' : 'text-slate-400'
+                  }`}>Ejemplo de Uso (SQL)</div>
+                  <button
+                    onClick={handleCopyDocExample}
+                    className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1 rounded-lg transition-all border ${
+                      copiedDocExample
+                        ? (isDark ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' : 'bg-emerald-50 border-emerald-300 text-emerald-700')
+                        : (isDark ? 'bg-blue-500/10 border-blue-500/30 text-blue-400 hover:bg-blue-500/20' : 'bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100')
+                    }`}
+                  >
+                    {copiedDocExample
+                      ? <><Check className="w-3.5 h-3.5" /> Copiado</>
+                      : <><Copy className="w-3.5 h-3.5" /> Copiar Script</>}
+                  </button>
+                </div>
+                <pre className={`text-[12px] font-mono px-4 py-4 rounded-xl border overflow-x-auto custom-scrollbar leading-relaxed ${
+                  isDark ? 'bg-slate-950 border-slate-800 text-emerald-300' : 'bg-slate-50 border-slate-200 text-emerald-800'
+                }`}>
+                  {currentDoc.example}
+                </pre>
+              </div>
+
+            </div>
+
+            {/* ── Footer ── */}
+            <div className={`px-6 py-3 border-t flex items-center justify-between shrink-0 ${
+              isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}>
+              <p className={`text-[10px] ${ isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                Este modal se puede abrir / cerrar con <kbd className={`font-mono px-1.5 py-0.5 rounded text-[10px] border ${
+                  isDark ? 'bg-slate-800 border-slate-700 text-slate-300' : 'bg-white border-slate-300 text-slate-600'
+                }`}>Ctrl+Alt+D</kbd> desde cualquier pestaña del monitor
+              </p>
+              <button
+                onClick={() => setIsDocModalOpen(false)}
+                className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                  isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                }`}
+              >
+                Cerrar
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+    </>
   );
 }
