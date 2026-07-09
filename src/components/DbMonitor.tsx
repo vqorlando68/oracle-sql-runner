@@ -2358,14 +2358,26 @@ END;
                       let cardStyle = '';
                       let badgeStyle = '';
                       if (isHigh) {
-                        cardStyle = 'bg-red-500/5 border-red-500/20 text-red-200';
-                        badgeStyle = 'bg-red-500/15 text-red-400 border-red-500/35';
+                        cardStyle = isDark 
+                          ? 'bg-red-500/5 border-red-500/20 text-red-200' 
+                          : 'bg-red-500/5 border-red-500/30 text-red-700';
+                        badgeStyle = isDark 
+                          ? 'bg-red-500/15 text-red-400 border-red-500/35' 
+                          : 'bg-red-500/10 text-red-700 border-red-500/30';
                       } else if (isMedium) {
-                        cardStyle = 'bg-amber-500/5 border-amber-500/20 text-amber-200';
-                        badgeStyle = 'bg-amber-500/15 text-amber-400 border-amber-500/35';
+                        cardStyle = isDark 
+                          ? 'bg-amber-500/5 border-amber-500/20 text-amber-200' 
+                          : 'bg-amber-500/5 border-amber-500/30 text-amber-800';
+                        badgeStyle = isDark 
+                          ? 'bg-amber-500/15 text-amber-400 border-amber-500/35' 
+                          : 'bg-amber-500/10 text-amber-700 border-amber-500/30';
                       } else {
-                        cardStyle = 'bg-blue-500/5 border-blue-500/20 text-blue-200';
-                        badgeStyle = 'bg-blue-500/15 text-blue-400 border-blue-500/35';
+                        cardStyle = isDark 
+                          ? 'bg-blue-500/5 border-blue-500/20 text-blue-200' 
+                          : 'bg-blue-500/5 border-blue-500/30 text-blue-800';
+                        badgeStyle = isDark 
+                          ? 'bg-blue-500/15 text-blue-400 border-blue-500/35' 
+                          : 'bg-blue-500/10 text-blue-700 border-blue-500/30';
                       }
 
                        return (
@@ -2748,243 +2760,264 @@ END;
       />
 
       {/* Healthcheck Detail Modal */}
-      {isHealthcheckModalOpen && selectedAlert && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800/80 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl animate-scaleUp">
-            
-            {/* Header */}
-            <header className="px-6 py-4 border-b border-slate-800/50 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className={`p-1.5 rounded-lg bg-black/20 ${
-                  selectedAlert.severity?.toUpperCase() === 'HIGH' ? 'text-red-500' : 
-                  selectedAlert.severity?.toUpperCase() === 'MEDIUM' ? 'text-amber-500' : 'text-blue-500'
-                }`}>
-                  <ShieldAlert className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-sm text-slate-100 uppercase tracking-wider">Detalle del Diagnóstico</h3>
-                  <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Alerta de Seguridad e Integridad</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setIsHealthcheckModalOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </header>
+      {isHealthcheckModalOpen && selectedAlert && (() => {
+        const modalBg = isDark ? 'bg-slate-900 border-slate-800/80 text-slate-100 shadow-2xl' : 'bg-white border-slate-200 text-slate-900 shadow-xl';
+        const modalHeaderBorder = isDark ? 'border-slate-800/50' : 'border-slate-200/60 bg-slate-50';
+        const modalHeading = isDark ? 'text-slate-100' : 'text-slate-900';
+        const modalSub = isDark ? 'text-slate-400' : 'text-slate-500';
+        const modalBodyText = isDark ? 'text-slate-300' : 'text-slate-700';
+        const modalInnerSection = isDark ? 'bg-slate-950/40 border-slate-800/45' : 'bg-slate-50 border-slate-200';
+        const modalSectionTitle = isDark ? 'text-amber-500' : 'text-amber-700';
+        const modalLabelText = isDark ? 'text-slate-400' : 'text-slate-500';
+        const modalListBox = isDark ? 'border-slate-800/40 bg-slate-950/20' : 'border-slate-200 bg-slate-50/50';
+        const modalItem = isDark ? 'border-slate-800/10 hover:bg-slate-800/10 text-slate-200' : 'border-slate-200/50 hover:bg-slate-100 text-slate-850';
+        const modalPreBlock = isDark ? 'bg-slate-950 border-slate-900 text-sky-400' : 'bg-slate-50 border-slate-200 text-indigo-700';
+        const modalFooterBg = isDark ? 'border-slate-800/50 bg-slate-950/20' : 'border-slate-200/60 bg-slate-50';
+        const modalCloseBtn = isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-200' : 'bg-slate-200 hover:bg-slate-300 text-slate-800 border border-slate-300';
+        const modalTableHead = isDark ? 'bg-slate-950/50 text-slate-400 border-b border-slate-800/30' : 'bg-slate-100 text-slate-600 border-b border-slate-200';
+        const modalTableRow = isDark ? 'border-b border-slate-800/10 last:border-0 hover:bg-slate-800/20 text-slate-200' : 'border-b border-slate-200/50 last:border-0 hover:bg-slate-50 text-slate-800';
+        const modalCloseIconBtn = isDark ? 'hover:bg-slate-800 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-200 text-slate-500 hover:text-slate-800';
+        const modalDivider = isDark ? 'border-slate-800/40' : 'border-slate-200/85';
+        const modalIconBg = isDark ? 'bg-black/20' : 'bg-slate-200/55';
 
-            {/* Content */}
-            <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+            <div className={`border rounded-2xl max-w-lg w-full overflow-hidden animate-scaleUp ${modalBg}`}>
               
-              {/* Severity & Message */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] uppercase font-bold tracking-wider opacity-50">Gravedad:</span>
-                  <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${
-                    selectedAlert.severity?.toUpperCase() === 'HIGH' ? 'bg-red-500/10 text-red-400 border-red-500/35' :
-                    selectedAlert.severity?.toUpperCase() === 'MEDIUM' ? 'bg-amber-500/10 text-amber-400 border-amber-500/35' :
-                    'bg-blue-500/10 text-blue-400 border-blue-500/35'
+              {/* Header */}
+              <header className={`px-6 py-4 border-b flex items-center justify-between ${modalHeaderBorder}`}>
+                <div className="flex items-center gap-2.5">
+                  <div className={`p-1.5 rounded-lg ${modalIconBg} ${
+                    selectedAlert.severity?.toUpperCase() === 'HIGH' ? 'text-red-500' : 
+                    selectedAlert.severity?.toUpperCase() === 'MEDIUM' ? 'text-amber-500' : 'text-blue-500'
                   }`}>
-                    {selectedAlert.severity}
-                  </span>
-                </div>
-                <h4 className="text-base font-extrabold text-slate-200 leading-snug">
-                  {selectedAlert.message}
-                </h4>
-              </div>
-
-              {/* Dynamic Detail Content */}
-              {modalDetailsLoading ? (
-                <div className="flex flex-col items-center justify-center py-8 gap-3 border-t border-slate-800/40">
-                  <RefreshCw className="w-7 h-7 animate-spin text-amber-500" />
-                  <span className="text-xs text-slate-400 font-semibold">Consultando detalles en tiempo real...</span>
-                </div>
-              ) : modalDetailsData ? (
-                <div className="space-y-4 pt-3 border-t border-slate-800/40 animate-fadeIn">
-                  
-                  {/* Invalid Objects Detail */}
-                  {modalDetailsData.type === 'invalid_objects' && (
-                    <div className="space-y-3.5">
-                      <div className="bg-slate-950/40 p-4 border border-slate-800/45 rounded-xl space-y-2">
-                        <span className="text-[10px] uppercase font-black tracking-wider text-amber-500 block leading-none">Descripción del Diagnóstico</span>
-                        <p className="text-xs text-slate-300 font-medium font-sans leading-relaxed">
-                          Se encontraron <span className="text-red-400 font-bold">{modalDetailsData.list.length} objetos</span> en el esquema con errores de compilación. Para restablecer su funcionamiento, deben re-compilarse de forma individual o mediante el procedimiento de esquema.
-                        </p>
-                      </div>
-
-                      {/* Objects list */}
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Listado de Objetos Afectados</span>
-                        <div className="max-h-36 overflow-y-auto border border-slate-800/40 rounded-xl bg-slate-950/20 p-2.5 space-y-1 font-mono text-[10px]">
-                          {modalDetailsData.list.length > 0 ? (
-                            modalDetailsData.list.map((obj: any, i: number) => (
-                              <div key={i} className="flex items-center justify-between py-1 border-b border-slate-800/10 last:border-0 hover:bg-slate-800/10 px-1.5 rounded">
-                                <span className="text-slate-200 font-bold">{obj.name}</span>
-                                <span className="text-slate-500 text-[9px] uppercase tracking-wider font-sans">{obj.type}</span>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="text-slate-500 italic text-center py-2">No se encontraron objetos inválidos.</div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Compilation Script with Copy Button */}
-                      {modalDetailsData.script && (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Script de Compilación</span>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(modalDetailsData.script);
-                                showToast('Script de compilación copiado', 'success');
-                              }}
-                              className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 text-[10px] font-black uppercase flex items-center gap-1.5 transition-all"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                              Copiar Script
-                            </button>
-                          </div>
-                          <pre className="p-3 bg-slate-950 border border-slate-900 rounded-xl font-mono text-[10px] text-sky-400 max-h-40 overflow-y-auto whitespace-pre-wrap select-all shadow-inner">
-                            {modalDetailsData.script}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* No Stats Detail */}
-                  {modalDetailsData.type === 'no_stats' && (
-                    <div className="space-y-3.5">
-                      <div className="bg-slate-950/40 p-4 border border-slate-800/45 rounded-xl space-y-2">
-                        <span className="text-[10px] uppercase font-black tracking-wider text-amber-500 block leading-none">Descripción del Diagnóstico</span>
-                        <p className="text-xs text-slate-300 font-medium font-sans leading-relaxed">
-                          Hay <span className="text-amber-400 font-bold">{modalDetailsData.list.length} tablas</span> en el esquema que carecen de estadísticas de optimizador actualizadas. Esto podría impactar negativamente en la velocidad de ejecución de las consultas.
-                        </p>
-                      </div>
-
-                      {/* Tables list */}
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Tablas sin Estadísticas</span>
-                        <div className="max-h-36 overflow-y-auto border border-slate-800/40 rounded-xl bg-slate-950/20 p-2.5 space-y-1 font-mono text-[10px]">
-                          {modalDetailsData.list.length > 0 ? (
-                            modalDetailsData.list.map((tbl: string, i: number) => (
-                              <div key={i} className="py-1 border-b border-slate-800/10 last:border-0 hover:bg-slate-800/10 px-1.5 rounded text-slate-200">
-                                {tbl}
-                              </div>
-                            ))
-                          ) : (
-                            <div className="text-slate-500 italic text-center py-2">No hay tablas sin estadísticas.</div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Stats Script with Copy Button */}
-                      {modalDetailsData.script && (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Script de Estadísticas</span>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(modalDetailsData.script);
-                                showToast('Script de estadísticas copiado', 'success');
-                              }}
-                              className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 text-[10px] font-black uppercase flex items-center gap-1.5 transition-all"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                              Copiar Script
-                            </button>
-                          </div>
-                          <pre className="p-3 bg-slate-950 border border-slate-900 rounded-xl font-mono text-[10px] text-sky-400 max-h-40 overflow-y-auto whitespace-pre-wrap select-all shadow-inner">
-                            {modalDetailsData.script}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Tablespaces Detail */}
-                  {modalDetailsData.type === 'tablespaces' && (
-                    <div className="space-y-3.5">
-                      <div className="bg-slate-950/40 p-4 border border-slate-800/45 rounded-xl space-y-2">
-                        <span className="text-[10px] uppercase font-black tracking-wider text-amber-500 block leading-none">Descripción del Diagnóstico</span>
-                        <p className="text-xs text-slate-300 font-medium font-sans leading-relaxed">
-                          Análisis detallado del espacio físico disponible en los tablespaces del sistema. Los tablespaces con menos de 1GB de espacio libre se resaltan en color de alerta.
-                        </p>
-                      </div>
-
-                      <div className="border border-slate-800/50 rounded-xl bg-slate-950/20 overflow-hidden">
-                        <table className="w-full text-[11px] font-medium font-mono text-left border-collapse">
-                          <thead>
-                            <tr className="bg-slate-950/50 text-slate-400 border-b border-slate-800/30">
-                              <th className="py-2.5 px-3 font-extrabold uppercase text-[9px] tracking-wider">Tablespace</th>
-                              <th className="py-2.5 px-2 font-extrabold uppercase text-[9px] tracking-wider text-right">Total (GB)</th>
-                              <th className="py-2.5 px-2 font-extrabold uppercase text-[9px] tracking-wider text-right">Usado (GB)</th>
-                              <th className="py-2.5 px-2 font-extrabold uppercase text-[9px] tracking-wider text-right">Libre (GB)</th>
-                              <th className="py-2.5 px-3 font-extrabold uppercase text-[9px] tracking-wider text-right">Porcentaje Libre</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {modalDetailsData.list.map((ts: any, i: number) => {
-                              const isLowSpace = ts.free < 1.0;
-                              return (
-                                <tr key={i} className="border-b border-slate-800/10 last:border-0 hover:bg-slate-800/20 transition-colors">
-                                  <td className="py-2 px-3 text-slate-200 font-bold">{ts.name}</td>
-                                  <td className="py-2 px-2 text-right text-slate-400">{ts.total.toFixed(3)}</td>
-                                  <td className="py-2 px-2 text-right text-slate-400">{ts.used.toFixed(3)}</td>
-                                  <td className={`py-2 px-2 text-right font-bold ${isLowSpace ? 'text-red-400 font-black animate-pulse' : 'text-slate-300'}`}>
-                                    {ts.free.toFixed(3)}
-                                  </td>
-                                  <td className="py-2 px-3 text-right">
-                                    <div className="flex items-center justify-end gap-2">
-                                      <div className="w-14 h-1.5 bg-slate-850 rounded-full overflow-hidden shrink-0 border border-slate-800">
-                                        <div 
-                                          className={`h-full rounded-full transition-all duration-300 ${isLowSpace ? 'bg-red-500' : 'bg-emerald-500'}`} 
-                                          style={{ width: `${Math.min(ts.pctFree, 100)}%` }} 
-                                        />
-                                      </div>
-                                      <span className={`font-bold text-[10px] w-8 text-right ${isLowSpace ? 'text-red-400 font-black' : 'text-slate-400'}`}>
-                                        {ts.pctFree.toFixed(1)}%
-                                      </span>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                </div>
-              ) : (
-                <div className="space-y-4 pt-2 border-t border-slate-800/40">
-                  <div className="space-y-1">
-                    <span className="text-[10px] uppercase font-black tracking-wider text-amber-500 leading-none">Descripción del Problema</span>
-                    <p className="text-xs text-slate-300 font-medium leading-relaxed font-sans">
-                      Esta alerta ha sido detectada automáticamente durante el análisis preventivo del estado y salud de la base de datos.
-                    </p>
+                    <ShieldAlert className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className={`font-extrabold text-sm uppercase tracking-wider ${modalHeading}`}>Detalle del Diagnóstico</h3>
+                    <p className={`text-[10px] font-semibold mt-0.5 ${modalSub}`}>Alerta de Seguridad e Integridad</p>
                   </div>
                 </div>
-              )}
+                <button 
+                  onClick={() => setIsHealthcheckModalOpen(false)}
+                  className={`p-1.5 rounded-lg transition-colors ${modalCloseIconBtn}`}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </header>
+
+              {/* Content */}
+              <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+                
+                {/* Severity & Message */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold tracking-wider opacity-50">Gravedad:</span>
+                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${
+                      selectedAlert.severity?.toUpperCase() === 'HIGH' ? 'bg-red-500/10 text-red-500 border-red-500/35' :
+                      selectedAlert.severity?.toUpperCase() === 'MEDIUM' ? 'bg-amber-500/10 text-amber-600 border-amber-500/35' :
+                      'bg-blue-500/10 text-blue-600 border-blue-500/35'
+                    }`}>
+                      {selectedAlert.severity}
+                    </span>
+                  </div>
+                  <h4 className={`text-base font-extrabold leading-snug ${modalHeading}`}>
+                    {selectedAlert.message}
+                  </h4>
+                </div>
+
+                {/* Dynamic Detail Content */}
+                {modalDetailsLoading ? (
+                  <div className={`flex flex-col items-center justify-center py-8 gap-3 border-t ${modalDivider}`}>
+                    <RefreshCw className="w-7 h-7 animate-spin text-amber-500" />
+                    <span className={`text-xs font-semibold ${modalSub}`}>Consultando detalles en tiempo real...</span>
+                  </div>
+                ) : modalDetailsData ? (
+                  <div className={`space-y-4 pt-3 border-t animate-fadeIn ${modalDivider}`}>
+                    
+                    {/* Invalid Objects Detail */}
+                    {modalDetailsData.type === 'invalid_objects' && (
+                      <div className="space-y-3.5">
+                        <div className={`p-4 border rounded-xl space-y-2 ${modalInnerSection}`}>
+                          <span className={`text-[10px] uppercase font-black tracking-wider block leading-none ${modalSectionTitle}`}>Descripción del Diagnóstico</span>
+                          <p className={`text-xs font-medium font-sans leading-relaxed ${modalBodyText}`}>
+                            Se encontraron <span className="text-red-500 font-bold">{modalDetailsData.list.length} objetos</span> en el esquema con errores de compilación. Para restablecer su funcionamiento, deben re-compilarse de forma individual o mediante el procedimiento de esquema.
+                          </p>
+                        </div>
+
+                        {/* Objects list */}
+                        <div className="space-y-1.5">
+                          <span className={`text-[10px] uppercase font-black tracking-wider ${modalLabelText}`}>Listado de Objetos Afectados</span>
+                          <div className={`max-h-36 overflow-y-auto border rounded-xl p-2.5 space-y-1 font-mono text-[10px] ${modalListBox}`}>
+                            {modalDetailsData.list.length > 0 ? (
+                              modalDetailsData.list.map((obj: any, i: number) => (
+                                <div key={i} className={`flex items-center justify-between py-1 border-b last:border-0 px-1.5 rounded transition-colors ${modalItem}`}>
+                                  <span className="font-bold">{obj.name}</span>
+                                  <span className="text-[9px] uppercase tracking-wider font-sans opacity-75">{obj.type}</span>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="text-slate-500 italic text-center py-2">No se encontraron objetos inválidos.</div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Compilation Script with Copy Button */}
+                        {modalDetailsData.script && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className={`text-[10px] uppercase font-black tracking-wider ${modalLabelText}`}>Script de Compilación</span>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(modalDetailsData.script);
+                                  showToast('Script de compilación copiado', 'success');
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-[10px] font-black uppercase flex items-center gap-1.5 transition-all"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                                Copiar Script
+                              </button>
+                            </div>
+                            <pre className={`p-3 rounded-xl font-mono text-[10px] max-h-40 overflow-y-auto whitespace-pre-wrap select-all shadow-inner ${modalPreBlock}`}>
+                              {modalDetailsData.script}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* No Stats Detail */}
+                    {modalDetailsData.type === 'no_stats' && (
+                      <div className="space-y-3.5">
+                        <div className={`p-4 border rounded-xl space-y-2 ${modalInnerSection}`}>
+                          <span className={`text-[10px] uppercase font-black tracking-wider block leading-none ${modalSectionTitle}`}>Descripción del Diagnóstico</span>
+                          <p className={`text-xs font-medium font-sans leading-relaxed ${modalBodyText}`}>
+                            Hay <span className="text-amber-600 dark:text-amber-400 font-bold">{modalDetailsData.list.length} tablas</span> en el esquema que carecen de estadísticas de optimizador actualizadas. Esto podría impactar negativamente en la velocidad de ejecución de las consultas.
+                          </p>
+                        </div>
+
+                        {/* Tables list */}
+                        <div className="space-y-1.5">
+                          <span className={`text-[10px] uppercase font-black tracking-wider ${modalLabelText}`}>Tablas sin Estadísticas</span>
+                          <div className={`max-h-36 overflow-y-auto border rounded-xl p-2.5 space-y-1 font-mono text-[10px] ${modalListBox}`}>
+                            {modalDetailsData.list.length > 0 ? (
+                              modalDetailsData.list.map((tbl: string, i: number) => (
+                                <div key={i} className={`py-1 border-b last:border-0 px-1.5 rounded transition-colors ${modalItem}`}>
+                                  {tbl}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="text-slate-500 italic text-center py-2">No hay tablas sin estadísticas.</div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Stats Script with Copy Button */}
+                        {modalDetailsData.script && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className={`text-[10px] uppercase font-black tracking-wider ${modalLabelText}`}>Script de Estadísticas</span>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(modalDetailsData.script);
+                                  showToast('Script de estadísticas copiado', 'success');
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-[10px] font-black uppercase flex items-center gap-1.5 transition-all"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                                Copiar Script
+                              </button>
+                            </div>
+                            <pre className={`p-3 rounded-xl font-mono text-[10px] max-h-40 overflow-y-auto whitespace-pre-wrap select-all shadow-inner ${modalPreBlock}`}>
+                              {modalDetailsData.script}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Tablespaces Detail */}
+                    {modalDetailsData.type === 'tablespaces' && (
+                      <div className="space-y-3.5">
+                        <div className={`p-4 border rounded-xl space-y-2 ${modalInnerSection}`}>
+                          <span className={`text-[10px] uppercase font-black tracking-wider block leading-none ${modalSectionTitle}`}>Descripción del Diagnóstico</span>
+                          <p className={`text-xs font-medium font-sans leading-relaxed ${modalBodyText}`}>
+                            Análisis detallado del espacio físico disponible en los tablespaces del sistema. Los tablespaces con menos de 1GB de espacio libre se resaltan en color de alerta.
+                          </p>
+                        </div>
+
+                        <div className={`border rounded-xl overflow-hidden ${modalListBox}`}>
+                          <table className="w-full text-[11px] font-medium font-mono text-left border-collapse">
+                            <thead>
+                              <tr className={`text-[9px] uppercase tracking-wider ${modalTableHead}`}>
+                                <th className="py-2.5 px-3 font-extrabold">Tablespace</th>
+                                <th className="py-2.5 px-2 font-extrabold text-right">Total (GB)</th>
+                                <th className="py-2.5 px-2 font-extrabold text-right">Usado (GB)</th>
+                                <th className="py-2.5 px-2 font-extrabold text-right">Libre (GB)</th>
+                                <th className="py-2.5 px-3 font-extrabold text-right">Porcentaje Libre</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {modalDetailsData.list.map((ts: any, i: number) => {
+                                const isLowSpace = ts.free < 1.0;
+                                return (
+                                  <tr key={i} className={`transition-colors ${modalTableRow}`}>
+                                    <td className="py-2 px-3 font-bold">{ts.name}</td>
+                                    <td className="py-2 px-2 text-right opacity-85">{ts.total.toFixed(3)}</td>
+                                    <td className="py-2 px-2 text-right opacity-85">{ts.used.toFixed(3)}</td>
+                                    <td className={`py-2 px-2 text-right font-bold ${isLowSpace ? 'text-red-500 font-black animate-pulse' : 'opacity-85'}`}>
+                                      {ts.free.toFixed(3)}
+                                    </td>
+                                    <td className="py-2 px-3 text-right">
+                                      <div className="flex items-center justify-end gap-2">
+                                        <div className={`w-14 h-1.5 rounded-full overflow-hidden shrink-0 border ${isDark ? 'bg-slate-850 border-slate-800' : 'bg-slate-200 border-slate-350'}`}>
+                                          <div 
+                                            className={`h-full rounded-full transition-all duration-300 ${isLowSpace ? 'bg-red-500' : 'bg-emerald-500'}`} 
+                                            style={{ width: `${Math.min(ts.pctFree, 100)}%` }} 
+                                          />
+                                        </div>
+                                        <span className={`font-bold text-[10px] w-8 text-right ${isLowSpace ? 'text-red-500 font-black' : 'opacity-85'}`}>
+                                          {ts.pctFree.toFixed(1)}%
+                                        </span>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                ) : (
+                  <div className={`space-y-4 pt-2 border-t ${modalDivider}`}>
+                    <div className="space-y-1">
+                      <span className={`text-[10px] uppercase font-black tracking-wider leading-none ${modalSectionTitle}`}>Descripción del Problema</span>
+                      <p className={`text-xs font-medium leading-relaxed font-sans ${modalBodyText}`}>
+                        Esta alerta ha sido detectada automáticamente durante el análisis preventivo del estado y salud de la base de datos.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+
+              {/* Footer */}
+              <footer className={`px-6 py-4 border-t flex justify-end ${modalFooterBg}`}>
+                <button
+                  onClick={() => setIsHealthcheckModalOpen(false)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${modalCloseBtn}`}
+                >
+                  Cerrar Ventana
+                </button>
+              </footer>
 
             </div>
-
-            {/* Footer */}
-            <footer className="px-6 py-4 border-t border-slate-800/50 bg-slate-950/20 flex justify-end">
-              <button
-                onClick={() => setIsHealthcheckModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition-colors"
-              >
-                Cerrar Ventana
-              </button>
-            </footer>
-
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
