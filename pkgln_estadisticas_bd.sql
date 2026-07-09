@@ -874,8 +874,13 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
         ELSIF v_object_type = 'INDEX' THEN
             -- Count total indexes dynamically
             BEGIN
-                EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_objects WHERE object_type = ''INDEX'' AND owner = :owner AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
-                  INTO v_total_records USING v_owner, v_search, v_search;
+                IF v_owner = 'ALL' THEN
+                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_objects WHERE object_type = ''INDEX'' AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
+                      INTO v_total_records USING v_search, v_search;
+                ELSE
+                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_objects WHERE object_type = ''INDEX'' AND owner = :owner AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
+                      INTO v_total_records USING v_owner, v_search, v_search;
+                END IF;
             EXCEPTION WHEN OTHERS THEN
                 BEGIN
                     EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM user_objects WHERE object_type = ''INDEX'' AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
@@ -894,76 +899,155 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"items":['), '"items":[');
 
             BEGIN
-                v_query := 'SELECT object_name, status, created, last_ddl_time, info ' ||
-                           '  FROM ( ' ||
-                           '    SELECT o.object_name, o.status, TO_CHAR(o.created, ''YYYY-MM-DD'') AS created, TO_CHAR(o.last_ddl_time, ''YYYY-MM-DD'') AS last_ddl_time, ' ||
-                           '           (SELECT i.table_name || '' ('' || LISTAGG(c.column_name, '', '') WITHIN GROUP (ORDER BY c.column_position) || '')'' ' ||
-                           '              FROM dba_indexes i ' ||
-                           '              JOIN dba_ind_columns c ON i.index_name = c.index_name AND i.owner = c.index_owner ' ||
-                           '             WHERE i.index_name = o.object_name AND i.owner = o.owner ' ||
-                           '             GROUP BY i.table_name) AS info ' ||
-                           '      FROM dba_objects o ' ||
-                           '     WHERE o.object_type = ''INDEX'' ' ||
-                           '       AND o.owner = :owner ' ||
-                           '       AND (:search IS NULL OR UPPER(o.object_name) LIKE ''%'' || UPPER(:search) || ''%'') ' ||
-                           '     ORDER BY o.object_name ' ||
-                           '  ) ' ||
-                           '  OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
-                OPEN c_data FOR v_query USING v_owner, v_search, v_search, v_offset, v_page_size;
+                IF v_owner = 'ALL' THEN
+                    v_query := 'SELECT object_name, status, created, last_ddl_time, info, owner ' ||
+                               '  FROM ( ' ||
+                               '    SELECT o.object_name, o.status, TO_CHAR(o.created, ''YYYY-MM-DD'') AS created, TO_CHAR(o.last_ddl_time, ''YYYY-MM-DD'') AS last_ddl_time, ' ||
+                               '           (SELECT i.table_name || '' ('' || LISTAGG(c.column_name, '', '') WITHIN GROUP (ORDER BY c.column_position) || '')'' ' ||
+                               '              FROM dba_indexes i ' ||
+                               '              JOIN dba_ind_columns c ON i.index_name = c.index_name AND i.owner = c.index_owner ' ||
+                               '             WHERE i.index_name = o.object_name AND i.owner = o.owner ' ||
+                               '             GROUP BY i.table_name) AS info, o.owner ' ||
+                               '      FROM dba_objects o ' ||
+                               '     WHERE o.object_type = ''INDEX'' ' ||
+                               '       AND (:search IS NULL OR UPPER(o.object_name) LIKE ''%'' || UPPER(:search) || ''%'') ' ||
+                               '     ORDER BY o.owner, o.object_name ' ||
+                               '  ) ' ||
+                               '  OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                    OPEN c_data FOR v_query USING v_search, v_search, v_offset, v_page_size;
+                ELSE
+                    v_query := 'SELECT object_name, status, created, last_ddl_time, info, owner ' ||
+                               '  FROM ( ' ||
+                               '    SELECT o.object_name, o.status, TO_CHAR(o.created, ''YYYY-MM-DD'') AS created, TO_CHAR(o.last_ddl_time, ''YYYY-MM-DD'') AS last_ddl_time, ' ||
+                               '           (SELECT i.table_name || '' ('' || LISTAGG(c.column_name, '', '') WITHIN GROUP (ORDER BY c.column_position) || '')'' ' ||
+                               '              FROM dba_indexes i ' ||
+                               '              JOIN dba_ind_columns c ON i.index_name = c.index_name AND i.owner = c.index_owner ' ||
+                               '             WHERE i.index_name = o.object_name AND i.owner = o.owner ' ||
+                               '             GROUP BY i.table_name) AS info, o.owner ' ||
+                               '      FROM dba_objects o ' ||
+                               '     WHERE o.object_type = ''INDEX'' ' ||
+                               '       AND o.owner = :owner ' ||
+                               '       AND (:search IS NULL OR UPPER(o.object_name) LIKE ''%'' || UPPER(:search) || ''%'') ' ||
+                               '     ORDER BY o.object_name ' ||
+                               '  ) ' ||
+                               '  OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                    OPEN c_data FOR v_query USING v_owner, v_search, v_search, v_offset, v_page_size;
+                END IF;
                 LOOP
-                    FETCH c_data INTO v_name, v_status, v_created, v_last_ddl, v_info;
+                    FETCH c_data INTO v_name, v_status, v_created, v_last_ddl, v_info, v_row_owner;
                     EXIT WHEN c_data%NOTFOUND;
-                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}'), v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}');
+                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}'), v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}');
                     v_comma := ',';
                 END LOOP;
                 CLOSE c_data;
             EXCEPTION WHEN OTHERS THEN
                 IF c_data%ISOPEN THEN CLOSE c_data; END IF;
                 BEGIN
-                    v_query := 'SELECT object_name, status, created, last_ddl_time, info ' ||
-                               '  FROM ( ' ||
-                               '    SELECT o.object_name, o.status, TO_CHAR(o.created, ''YYYY-MM-DD'') AS created, TO_CHAR(o.last_ddl_time, ''YYYY-MM-DD'') AS last_ddl_time, ' ||
-                               '           (SELECT i.table_name || '' ('' || LISTAGG(c.column_name, '', '') WITHIN GROUP (ORDER BY c.column_position) || '')'' ' ||
-                               '              FROM user_indexes i ' ||
-                               '              JOIN user_ind_columns c ON i.index_name = c.index_name ' ||
-                               '             WHERE i.index_name = o.object_name ' ||
-                               '             GROUP BY i.table_name) AS info ' ||
-                               '      FROM user_objects o ' ||
-                               '     WHERE o.object_type = ''INDEX'' ' ||
-                               '       AND (:search IS NULL OR UPPER(o.object_name) LIKE ''%'' || UPPER(:search) || ''%'') ' ||
-                               '     ORDER BY o.object_name ' ||
-                               '  ) ' ||
-                               '  OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
-                    OPEN c_data FOR v_query USING v_search, v_search, v_offset, v_page_size;
+                    IF v_owner = 'ALL' THEN
+                        v_query := 'SELECT object_name, status, created, last_ddl_time, info, owner ' ||
+                                   '  FROM ( ' ||
+                                   '    SELECT o.object_name, o.status, TO_CHAR(o.created, ''YYYY-MM-DD'') AS created, TO_CHAR(o.last_ddl_time, ''YYYY-MM-DD'') AS last_ddl_time, ' ||
+                                   '           (SELECT i.table_name || '' ('' || LISTAGG(c.column_name, '', '') WITHIN GROUP (ORDER BY c.column_position) || '')'' ' ||
+                                   '              FROM all_indexes i ' ||
+                                   '              JOIN all_ind_columns c ON i.index_name = c.index_name AND i.owner = c.index_owner ' ||
+                                   '             WHERE i.index_name = o.object_name AND i.owner = o.owner ' ||
+                                   '             GROUP BY i.table_name) AS info, o.owner ' ||
+                                   '      FROM all_objects o ' ||
+                                   '     WHERE o.object_type = ''INDEX'' ' ||
+                                   '       AND (:search IS NULL OR UPPER(o.object_name) LIKE ''%'' || UPPER(:search) || ''%'') ' ||
+                                   '     ORDER BY o.owner, o.object_name ' ||
+                                   '  ) ' ||
+                                   '  OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_search, v_search, v_offset, v_page_size;
+                    ELSE
+                        v_query := 'SELECT object_name, status, created, last_ddl_time, info, owner ' ||
+                                   '  FROM ( ' ||
+                                   '    SELECT o.object_name, o.status, TO_CHAR(o.created, ''YYYY-MM-DD'') AS created, TO_CHAR(o.last_ddl_time, ''YYYY-MM-DD'') AS last_ddl_time, ' ||
+                                   '           (SELECT i.table_name || '' ('' || LISTAGG(c.column_name, '', '') WITHIN GROUP (ORDER BY c.column_position) || '')'' ' ||
+                                   '              FROM all_indexes i ' ||
+                                   '              JOIN all_ind_columns c ON i.index_name = c.index_name AND i.owner = c.index_owner ' ||
+                                   '             WHERE i.index_name = o.object_name AND i.owner = o.owner ' ||
+                                   '             GROUP BY i.table_name) AS info, o.owner ' ||
+                                   '      FROM all_objects o ' ||
+                                   '     WHERE o.object_type = ''INDEX'' ' ||
+                                   '       AND o.owner = :owner ' ||
+                                   '       AND (:search IS NULL OR UPPER(o.object_name) LIKE ''%'' || UPPER(:search) || ''%'') ' ||
+                                   '     ORDER BY o.object_name ' ||
+                                   '  ) ' ||
+                                   '  OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_owner, v_search, v_search, v_offset, v_page_size;
+                    END IF;
                     v_comma := '';
                     LOOP
-                        FETCH c_data INTO v_name, v_status, v_created, v_last_ddl, v_info;
+                        FETCH c_data INTO v_name, v_status, v_created, v_last_ddl, v_info, v_row_owner;
                         EXIT WHEN c_data%NOTFOUND;
-                        DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}'), v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}');
+                        DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}'), v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}');
                         v_comma := ',';
                     END LOOP;
                     CLOSE c_data;
                 EXCEPTION WHEN OTHERS THEN
                     IF c_data%ISOPEN THEN CLOSE c_data; END IF;
-                    v_comma := '';
-                    FOR i IN 1..LEAST(v_page_size, 5) LOOP
-                        DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"IDX_MOCK_VALORES_' || (v_offset+i) || '","type":"INDEX","status":"VALID","owner":"' || v_owner || '","created":"2025-08-20","last_ddl":"2026-05-28","info":"TKR_TRANSACCIONES (ID, FECHA)"}'), v_comma || '{"name":"IDX_MOCK_VALORES_' || (v_offset+i) || '","type":"INDEX","status":"VALID","owner":"' || v_owner || '","created":"2025-08-20","last_ddl":"2026-05-28","info":"TKR_TRANSACCIONES (ID, FECHA)"}');
-                        v_comma := ',';
-                    END LOOP;
+                    BEGIN
+                        v_query := 'SELECT object_name, status, created, last_ddl_time, info, USER AS owner ' ||
+                                   '  FROM ( ' ||
+                                   '    SELECT o.object_name, o.status, TO_CHAR(o.created, ''YYYY-MM-DD'') AS created, TO_CHAR(o.last_ddl_time, ''YYYY-MM-DD'') AS last_ddl_time, ' ||
+                                   '           (SELECT i.table_name || '' ('' || LISTAGG(c.column_name, '', '') WITHIN GROUP (ORDER BY c.column_position) || '')'' ' ||
+                                   '              FROM user_indexes i ' ||
+                                   '              JOIN user_ind_columns c ON i.index_name = c.index_name ' ||
+                                   '             WHERE i.index_name = o.object_name ' ||
+                                   '             GROUP BY i.table_name) AS info ' ||
+                                   '      FROM user_objects o ' ||
+                                   '     WHERE o.object_type = ''INDEX'' ' ||
+                                   '       AND (:search IS NULL OR UPPER(o.object_name) LIKE ''%'' || UPPER(:search) || ''%'') ' ||
+                                   '     ORDER BY o.object_name ' ||
+                                   '  ) ' ||
+                                   '  OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_search, v_search, v_offset, v_page_size;
+                        v_comma := '';
+                        LOOP
+                            FETCH c_data INTO v_name, v_status, v_created, v_last_ddl, v_info, v_row_owner;
+                            EXIT WHEN c_data%NOTFOUND;
+                            DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}'), v_comma || '{"name":"' || v_name || '","type":"INDEX","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '","info":"' || v_info || '"}');
+                            v_comma := ',';
+                        END LOOP;
+                        CLOSE c_data;
+                    EXCEPTION WHEN OTHERS THEN
+                        IF c_data%ISOPEN THEN CLOSE c_data; END IF;
+                        v_comma := '';
+                        FOR i IN 1..LEAST(v_page_size, 5) LOOP
+                            DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"IDX_MOCK_VALORES_' || (v_offset+i) || '","type":"INDEX","status":"VALID","owner":"' || v_owner || '","created":"2025-08-20","last_ddl":"2026-05-28","info":"TKR_TRANSACCIONES (ID, FECHA)"}'), v_comma || '{"name":"IDX_MOCK_VALORES_' || (v_offset+i) || '","type":"INDEX","status":"VALID","owner":"' || v_owner || '","created":"2025-08-20","last_ddl":"2026-05-28","info":"TKR_TRANSACCIONES (ID, FECHA)"}');
+                            v_comma := ',';
+                        END LOOP;
+                    END;
                 END;
             END;
 
         ELSE
             -- Normal objects type (e.g. TABLE, VIEW, etc.) dynamically
             BEGIN
-                EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_objects WHERE object_type = :type AND owner = :owner AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
-                  INTO v_total_records USING v_object_type, v_owner, v_search, v_search;
+                IF v_owner = 'ALL' THEN
+                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_objects WHERE object_type = :type AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
+                      INTO v_total_records USING v_object_type, v_search, v_search;
+                ELSE
+                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_objects WHERE object_type = :type AND owner = :owner AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
+                      INTO v_total_records USING v_object_type, v_owner, v_search, v_search;
+                END IF;
             EXCEPTION WHEN OTHERS THEN
                 BEGIN
-                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM user_objects WHERE object_type = :type AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
-                      INTO v_total_records USING v_object_type, v_search, v_search;
+                    IF v_owner = 'ALL' THEN
+                        EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM all_objects WHERE object_type = :type AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
+                          INTO v_total_records USING v_object_type, v_search, v_search;
+                    ELSE
+                        EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM all_objects WHERE object_type = :type AND owner = :owner AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
+                          INTO v_total_records USING v_object_type, v_owner, v_search, v_search;
+                    END IF;
                 EXCEPTION WHEN OTHERS THEN
-                    v_total_records := 10;
+                    BEGIN
+                        EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM user_objects WHERE object_type = :type AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'')'
+                          INTO v_total_records USING v_object_type, v_search, v_search;
+                    EXCEPTION WHEN OTHERS THEN
+                        v_total_records := 10;
+                    END;
                 END;
             END;
 
@@ -976,46 +1060,86 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
             DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"items":['), '"items":[');
 
             BEGIN
-                v_query := 'SELECT object_name, status, TO_CHAR(created, ''YYYY-MM-DD''), TO_CHAR(last_ddl_time, ''YYYY-MM-DD'') ' ||
-                           '  FROM dba_objects ' ||
-                           ' WHERE object_type = :type ' ||
-                           '   AND owner = :owner ' ||
-                           '   AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
-                           ' ORDER BY object_name ' ||
-                           ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
-                OPEN c_data FOR v_query USING v_object_type, v_owner, v_search, v_search, v_offset, v_page_size;
+                IF v_owner = 'ALL' THEN
+                    v_query := 'SELECT object_name, status, TO_CHAR(created, ''YYYY-MM-DD''), TO_CHAR(last_ddl_time, ''YYYY-MM-DD''), owner ' ||
+                               '  FROM dba_objects ' ||
+                               ' WHERE object_type = :type ' ||
+                               '   AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                               ' ORDER BY owner, object_name ' ||
+                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                    OPEN c_data FOR v_query USING v_object_type, v_search, v_search, v_offset, v_page_size;
+                ELSE
+                    v_query := 'SELECT object_name, status, TO_CHAR(created, ''YYYY-MM-DD''), TO_CHAR(last_ddl_time, ''YYYY-MM-DD''), owner ' ||
+                               '  FROM dba_objects ' ||
+                               ' WHERE object_type = :type ' ||
+                               '   AND owner = :owner ' ||
+                               '   AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                               ' ORDER BY object_name ' ||
+                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                    OPEN c_data FOR v_query USING v_object_type, v_owner, v_search, v_search, v_offset, v_page_size;
+                END IF;
                 LOOP
-                    FETCH c_data INTO v_name, v_status, v_created, v_last_ddl;
+                    FETCH c_data INTO v_name, v_status, v_created, v_last_ddl, v_row_owner;
                     EXIT WHEN c_data%NOTFOUND;
-                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}'), v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}');
+                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}'), v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}');
                     v_comma := ',';
                 END LOOP;
                 CLOSE c_data;
             EXCEPTION WHEN OTHERS THEN
                 IF c_data%ISOPEN THEN CLOSE c_data; END IF;
                 BEGIN
-                    v_query := 'SELECT object_name, status, TO_CHAR(created, ''YYYY-MM-DD''), TO_CHAR(last_ddl_time, ''YYYY-MM-DD'') ' ||
-                               '  FROM user_objects ' ||
-                               ' WHERE object_type = :type ' ||
-                               '   AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
-                               ' ORDER BY object_name ' ||
-                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
-                    OPEN c_data FOR v_query USING v_object_type, v_search, v_search, v_offset, v_page_size;
+                    IF v_owner = 'ALL' THEN
+                        v_query := 'SELECT object_name, status, TO_CHAR(created, ''YYYY-MM-DD''), TO_CHAR(last_ddl_time, ''YYYY-MM-DD''), owner ' ||
+                                   '  FROM all_objects ' ||
+                                   ' WHERE object_type = :type ' ||
+                                   '   AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                                   ' ORDER BY owner, object_name ' ||
+                                   ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_object_type, v_search, v_search, v_offset, v_page_size;
+                    ELSE
+                        v_query := 'SELECT object_name, status, TO_CHAR(created, ''YYYY-MM-DD''), TO_CHAR(last_ddl_time, ''YYYY-MM-DD''), owner ' ||
+                                   '  FROM all_objects ' ||
+                                   ' WHERE object_type = :type ' ||
+                                   '   AND owner = :owner ' ||
+                                   '   AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                                   ' ORDER BY object_name ' ||
+                                   ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_object_type, v_owner, v_search, v_search, v_offset, v_page_size;
+                    END IF;
                     v_comma := '';
                     LOOP
-                        FETCH c_data INTO v_name, v_status, v_created, v_last_ddl;
+                        FETCH c_data INTO v_name, v_status, v_created, v_last_ddl, v_row_owner;
                         EXIT WHEN c_data%NOTFOUND;
-                        DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}'), v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}');
+                        DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}'), v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}');
                         v_comma := ',';
                     END LOOP;
                     CLOSE c_data;
                 EXCEPTION WHEN OTHERS THEN
                     IF c_data%ISOPEN THEN CLOSE c_data; END IF;
-                    v_comma := '';
-                    FOR i IN 1..LEAST(v_page_size, 5) LOOP
-                        DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"MOCK_' || v_object_type || '_' || (v_offset+i) || '","type":"' || v_object_type || '","status":"VALID","owner":"' || v_owner || '","created":"2025-08-20","last_ddl":"2026-05-28"}'), v_comma || '{"name":"MOCK_' || v_object_type || '_' || (v_offset+i) || '","type":"' || v_object_type || '","status":"VALID","owner":"' || v_owner || '","created":"2025-08-20","last_ddl":"2026-05-28"}');
-                        v_comma := ',';
-                    END LOOP;
+                    BEGIN
+                        v_query := 'SELECT object_name, status, TO_CHAR(created, ''YYYY-MM-DD''), TO_CHAR(last_ddl_time, ''YYYY-MM-DD''), USER AS owner ' ||
+                                   '  FROM user_objects ' ||
+                                   ' WHERE object_type = :type ' ||
+                                   '   AND (:s IS NULL OR UPPER(object_name) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                                   ' ORDER BY object_name ' ||
+                                   ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_object_type, v_search, v_search, v_offset, v_page_size;
+                        v_comma := '';
+                        LOOP
+                            FETCH c_data INTO v_name, v_status, v_created, v_last_ddl, v_row_owner;
+                            EXIT WHEN c_data%NOTFOUND;
+                            DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}'), v_comma || '{"name":"' || v_name || '","type":"' || v_object_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","last_ddl":"' || v_last_ddl || '"}');
+                            v_comma := ',';
+                        END LOOP;
+                        CLOSE c_data;
+                    EXCEPTION WHEN OTHERS THEN
+                        IF c_data%ISOPEN THEN CLOSE c_data; END IF;
+                        v_comma := '';
+                        FOR i IN 1..LEAST(v_page_size, 5) LOOP
+                            DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"MOCK_' || v_object_type || '_' || (v_offset+i) || '","type":"' || v_object_type || '","status":"VALID","owner":"' || v_owner || '","created":"2025-08-20","last_ddl":"2026-05-28"}'), v_comma || '{"name":"MOCK_' || v_object_type || '_' || (v_offset+i) || '","type":"' || v_object_type || '","status":"VALID","owner":"' || v_owner || '","created":"2025-08-20","last_ddl":"2026-05-28"}');
+                            v_comma := ',';
+                        END LOOP;
+                    END;
                 END;
             END;
         END IF;

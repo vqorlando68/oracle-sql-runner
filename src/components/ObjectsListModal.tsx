@@ -220,7 +220,7 @@ const getMockData = (type: string, query: string, page: number, pageSize: number
     ];
     for (let i = 1; i <= 80; i++) {
       const sch = schemasList[i % schemasList.length];
-      if (targetSchema && sch !== targetSchema) continue;
+      if (targetSchema && targetSchema !== 'ALL' && sch !== targetSchema) continue;
       const baseName = jobNames[i % jobNames.length];
       const isEnabled = i % 7 !== 0;
       allItems.push({
