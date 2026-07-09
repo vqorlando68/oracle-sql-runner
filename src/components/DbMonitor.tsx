@@ -1836,6 +1836,11 @@ SELECT df.tablespace_name AS name,
     }
   }, [isOpen, selectedConnection, activeTab]);
 
+  // Reset documentation context when changing activeTab
+  useEffect(() => {
+    setDocContext('tab');
+  }, [activeTab]);
+
   const handleCopyScript = () => {
     navigator.clipboard.writeText(DB_INSTALL_SCRIPT);
     setCopiedScript(true);
@@ -3243,7 +3248,7 @@ SELECT df.tablespace_name AS name,
                   </div>
                 </div>
                 <button 
-                  onClick={() => setIsHealthcheckModalOpen(false)}
+                  onClick={() => { setIsHealthcheckModalOpen(false); setDocContext('tab'); }}
                   className={`p-1.5 rounded-lg transition-colors ${modalCloseIconBtn}`}
                 >
                   <X className="w-4 h-4" />
