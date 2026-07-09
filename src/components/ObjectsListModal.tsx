@@ -85,6 +85,26 @@ const getMockData = (type: string, query: string, page: number, pageSize: number
       { name: "IDX_TKR_USUARIO_EMAIL", type: "INDEX", status: "VALID", owner: "TEKER_PROD", created: "2025-08-20", last_ddl: "2025-08-20", info: "TKR_USUARIOS (EMAIL)" },
       { name: "IDX_TKR_PAGOS_TX", type: "INDEX", status: "INVALID", owner: "TEKER_PROD", created: "2026-03-01", last_ddl: "2026-07-08", info: "TKR_PAGOS (TRANSACCION_ID, METODO)" }
     ];
+  } else if (t === 'JOB') {
+    const schemasList = ["SYS", "TEKER_PROD", "TEKER_DEV", "APEX_240200", "TEKER_STAGE"];
+    const jobNames = [
+      "CLEANUP_SESSIONS", "REFRESH_MV_SALES", "SEND_EMAILS", "PURGE_LOGS", 
+      "CALCULATE_METRICS", "SYNC_CLOUD", "BACKUP_META", "UPDATE_STATS", 
+      "OPTIMIZE_INDEXES", "GATHER_DICTIONARY_STATS"
+    ];
+    for (let i = 1; i <= 80; i++) {
+      const sch = schemasList[i % schemasList.length];
+      const baseName = jobNames[i % jobNames.length];
+      const isEnabled = i % 7 !== 0;
+      allItems.push({
+        name: `JOB_${baseName}_${i.toString().padStart(3, '0')}`,
+        type: "SCHEDULER_JOB",
+        status: isEnabled ? (i % 11 === 0 ? "RUNNING" : "SCHEDULED") : "DISABLED",
+        owner: sch,
+        created: "2025-08-20",
+        info: isEnabled ? "TRUE" : "FALSE"
+      });
+    }
   } else {
     // Generate simulated objects for normal types
     for (let i = 1; i <= 35; i++) {
@@ -311,22 +331,33 @@ export default function ObjectsListModal({
                     <th className="py-2.5 px-3">Propietario</th>
                     <th className="py-2.5 px-3">Estado</th>
                     <th className="py-2.5 px-3">Creado</th>
-                    <th className={`py-2.5 px-4 ${objectType.toUpperCase() === 'INDEX' ? 'text-left' : 'text-right'}`}>
-                      {objectType.toUpperCase() === 'INDEX' ? 'Tabla Asociada (Columnas)' : 'Detalle / Modificación'}
+                    <th className={`py-2.5 px-4 ${
+                      objectType.toUpperCase() === 'INDEX' || objectType.toUpperCase() === 'JOB' 
+                        ? 'text-left' 
+                        : 'text-right'
+                    }`}>
+                      {objectType.toUpperCase() === 'INDEX' 
+                        ? 'Tabla Asociada (Columnas)' 
+                        : objectType.toUpperCase() === 'JOB'
+                          ? '¿Habilitado?'
+                          : 'Detalle / Modificación'}
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((item, idx) => {
                     const statusUpper = item.status?.toUpperCase() || '';
-                    const isVal = statusUpper === 'VALID' || statusUpper === 'OPEN' || statusUpper === 'ACTIVE';
+                    const isVal = statusUpper === 'VALID' || statusUpper === 'OPEN' || statusUpper === 'ACTIVE' || statusUpper === 'RUNNING' || statusUpper === 'SCHEDULED';
                     const isInv = statusUpper === 'INVALID' || statusUpper.includes('LOCK');
+                    const isDis = statusUpper === 'DISABLED';
 
                     let statusBadge = '';
                     if (isVal) {
                       statusBadge = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/25';
                     } else if (isInv) {
                       statusBadge = 'bg-red-500/10 text-red-500 border-red-500/25 font-bold animate-pulse';
+                    } else if (isDis) {
+                      statusBadge = 'bg-slate-500/10 text-slate-400 border-slate-500/25';
                     } else {
                       statusBadge = 'bg-slate-500/10 text-slate-400 border-slate-500/25';
                     }
@@ -350,13 +381,23 @@ export default function ObjectsListModal({
                         </td>
                         <td className="py-2.5 px-3 opacity-65 font-mono">{item.created || '-'}</td>
                         <td className={`py-2.5 px-4 font-mono opacity-80 ${
-                          objectType.toUpperCase() === 'INDEX' 
-                            ? 'text-left text-sky-600 dark:text-sky-400 font-bold' 
+                          objectType.toUpperCase() === 'INDEX' || objectType.toUpperCase() === 'JOB' 
+                            ? 'text-left' 
                             : 'text-right'
                         }`}>
                           {objectType.toUpperCase() === 'INDEX' 
                             ? (item.info || '-') 
-                            : (item.last_ddl || item.info || '-')}
+                            : objectType.toUpperCase() === 'JOB'
+                              ? (
+                                  <span className={`px-2 py-0.5 rounded border inline-block text-[9px] font-black uppercase tracking-wider ${
+                                    item.info === 'TRUE' || item.info === 'SÍ' || item.info === 'YES'
+                                      ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/25'
+                                      : 'bg-rose-500/10 text-rose-500 border-rose-500/25'
+                                  }`}>
+                                    {item.info === 'TRUE' || item.info === 'SÍ' || item.info === 'YES' ? 'SÍ' : 'NO'}
+                                  </span>
+                                )
+                              : (item.last_ddl || item.info || '-')}
                         </td>
                       </tr>
                     );

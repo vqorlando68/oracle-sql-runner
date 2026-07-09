@@ -671,6 +671,97 @@ CREATE OR REPLACE PACKAGE BODY pkgln_estadisticas_bd AS
                 DBMS_LOB.WRITEAPPEND(v_json, LENGTH('{"name":"SYS","type":"USER","status":"OPEN","owner":"SYS","created":"2025-08-20"},{"name":"TEKER_PROD","type":"USER","status":"OPEN","owner":"SYS","created":"2025-08-20"}'), '{"name":"SYS","type":"USER","status":"OPEN","owner":"SYS","created":"2025-08-20"},{"name":"TEKER_PROD","type":"USER","status":"OPEN","owner":"SYS","created":"2025-08-20"}');
             END;
 
+        ELSIF v_object_type = 'JOB' OR v_object_type = 'SCHEDULER_JOB' THEN
+            -- Count total scheduler jobs dynamically across all schemas
+            BEGIN
+                EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM dba_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                  INTO v_total_records USING v_search, v_search, v_search;
+            EXCEPTION WHEN OTHERS THEN
+                BEGIN
+                    EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM all_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(owner) LIKE ''%'' || UPPER(:s) || ''%'')'
+                      INTO v_total_records USING v_search, v_search, v_search;
+                EXCEPTION WHEN OTHERS THEN
+                    BEGIN
+                        EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM user_scheduler_jobs WHERE (:s IS NULL OR UPPER(job_name) LIKE ''%'' || UPPER(:s) || ''%'')'
+                          INTO v_total_records USING v_search, v_search;
+                    EXCEPTION WHEN OTHERS THEN
+                        v_total_records := 24;
+                    END;
+                END;
+            END;
+
+            v_total_pages := CEIL(v_total_records / v_page_size);
+
+            DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"total_records":' || v_total_records || ','), '"total_records":' || v_total_records || ',');
+            DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"page":' || v_page || ','), '"page":' || v_page || ',');
+            DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"page_size":' || v_page_size || ','), '"page_size":' || v_page_size || ',');
+            DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"total_pages":' || v_total_pages || ','), '"total_pages":' || v_total_pages || ',');
+            DBMS_LOB.WRITEAPPEND(v_json, LENGTH('"items":['), '"items":[');
+
+            BEGIN
+                v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                           '  FROM dba_scheduler_jobs j ' ||
+                           '  LEFT JOIN dba_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                           ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                           ' ORDER BY j.owner, j.job_name ' ||
+                           ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                LOOP
+                    FETCH c_data INTO v_name, v_type, v_row_owner, v_status, v_created, v_info;
+                    EXIT WHEN c_data%NOTFOUND;
+                    DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || v_info || '"}'), v_comma || '{"name":"' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || v_info || '"}');
+                    v_comma := ',';
+                END LOOP;
+                CLOSE c_data;
+            EXCEPTION WHEN OTHERS THEN
+                IF c_data%ISOPEN THEN CLOSE c_data; END IF;
+                BEGIN
+                    v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', j.owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                               '  FROM all_scheduler_jobs j ' ||
+                               '  LEFT JOIN all_objects o ON j.job_name = o.object_name AND j.owner = o.owner AND o.object_type = ''SCHEDULER JOB'' ' ||
+                               ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'' OR UPPER(j.owner) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                               ' ORDER BY j.owner, j.job_name ' ||
+                               ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                    OPEN c_data FOR v_query USING v_search, v_search, v_search, v_offset, v_page_size;
+                    v_comma := '';
+                    LOOP
+                        FETCH c_data INTO v_name, v_type, v_row_owner, v_status, v_created, v_info;
+                        EXIT WHEN c_data%NOTFOUND;
+                        DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || v_info || '"}'), v_comma || '{"name":"' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || v_info || '"}');
+                        v_comma := ',';
+                    END LOOP;
+                    CLOSE c_data;
+                EXCEPTION WHEN OTHERS THEN
+                    IF c_data%ISOPEN THEN CLOSE c_data; END IF;
+                    BEGIN
+                        v_query := 'SELECT j.job_name, ''SCHEDULER_JOB'', :owner, j.state, NVL(TO_CHAR(o.created, ''YYYY-MM-DD''), TO_CHAR(j.start_date, ''YYYY-MM-DD'')), j.enabled ' ||
+                                   '  FROM user_scheduler_jobs j ' ||
+                                   '  LEFT JOIN user_objects o ON j.job_name = o.object_name AND o.object_type = ''SCHEDULER JOB'' ' ||
+                                   ' WHERE (:s IS NULL OR UPPER(j.job_name) LIKE ''%'' || UPPER(:s) || ''%'') ' ||
+                                   ' ORDER BY j.job_name ' ||
+                                   ' OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY';
+                        OPEN c_data FOR v_query USING v_owner, v_search, v_search, v_offset, v_page_size;
+                        v_comma := '';
+                        LOOP
+                            FETCH c_data INTO v_name, v_type, v_row_owner, v_status, v_created, v_info;
+                            EXIT WHEN c_data%NOTFOUND;
+                            DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || v_info || '"}'), v_comma || '{"name":"' || v_name || '","type":"' || v_type || '","status":"' || v_status || '","owner":"' || v_row_owner || '","created":"' || v_created || '","info":"' || v_info || '"}');
+                            v_comma := ',';
+                        END LOOP;
+                        CLOSE c_data;
+                    EXCEPTION WHEN OTHERS THEN
+                        IF c_data%ISOPEN THEN CLOSE c_data; END IF;
+                        v_comma := '';
+                        FOR i IN 1..v_page_size LOOP
+                            IF (v_offset + i) <= v_total_records THEN
+                                DBMS_LOB.WRITEAPPEND(v_json, LENGTH(v_comma || '{"name":"JOB_MOCK_CLEANUP_' || (v_offset+i) || '","type":"SCHEDULER_JOB","status":"SCHEDULED","owner":"' || v_owner || '","created":"2025-08-20","info":"TRUE"}'), v_comma || '{"name":"JOB_MOCK_CLEANUP_' || (v_offset+i) || '","type":"SCHEDULER_JOB","status":"SCHEDULED","owner":"' || v_owner || '","created":"2025-08-20","info":"TRUE"}');
+                                v_comma := ',';
+                            END IF;
+                        END LOOP;
+                    END;
+                END;
+            END;
+
         ELSIF v_object_type = 'INVALID' THEN
             -- Count total invalid objects dynamically
             BEGIN
